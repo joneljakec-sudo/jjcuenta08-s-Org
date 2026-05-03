@@ -434,6 +434,7 @@ export default function RecipeDetail({ recipe, onClose, onComplete, onUpdateReci
                       placeholder="Was it easy? Any tips for others?"
                       className="w-full p-6 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-[24px] outline-none min-h-[150px] transition-all"
                       value={comment}
+                      onKeyDown={(e) => e.stopPropagation()}
                       onChange={(e) => setComment(e.target.value)}
                     />
                   </div>

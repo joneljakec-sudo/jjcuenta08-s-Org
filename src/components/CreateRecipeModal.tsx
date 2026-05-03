@@ -6,7 +6,7 @@ import { generateRecipeImage } from '../services/geminiService';
 
 interface CreateRecipeModalProps {
   onClose: () => void;
-  onSave: (recipe: Recipe) => void;
+  onSave: (recipe: Recipe) => Promise<boolean> | any;
 }
 
 export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModalProps) {
@@ -61,8 +61,10 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
         image: finalImageUrl || '',
         tags: [...(recipe.tags || []), 'User Created']
       };
-      onSave(newRecipe);
-      onClose();
+      const success = await onSave(newRecipe);
+      if (success !== false) {
+        onClose();
+      }
     } catch (error) {
       console.error(error);
     } finally {
@@ -75,7 +77,7 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-brand-ink/40 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-brand-ink/60"
     >
       <motion.div 
         initial={{ scale: 0.9, y: 20 }}
@@ -93,11 +95,13 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
           <div className="space-y-4">
             <label className="block text-base font-bold uppercase tracking-widest text-brand-ink">Recipe Title</label>
             <input 
+              autoFocus
               required
               type="text" 
               placeholder="e.g. Grandma's Secret Adobo"
               className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none focus:border-brand-olive/30 transition-all"
               value={recipe.title}
+              onKeyDown={e => e.stopPropagation()}
               onChange={e => setRecipe({ ...recipe, title: e.target.value })}
             />
           </div>
@@ -109,6 +113,7 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
               placeholder="Tell us about your dish..."
               className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none min-h-[100px] focus:border-brand-olive/30 transition-all"
               value={recipe.description}
+              onKeyDown={e => e.stopPropagation()}
               onChange={e => setRecipe({ ...recipe, description: e.target.value })}
             />
           </div>
@@ -141,9 +146,10 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
               <input 
                 required
                 type="number" 
+                placeholder="0"
                 className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none focus:border-brand-olive/30 transition-all"
-                value={recipe.calories}
-                onChange={e => setRecipe({ ...recipe, calories: parseInt(e.target.value) })}
+                value={recipe.calories || ''}
+                onChange={e => setRecipe({ ...recipe, calories: parseInt(e.target.value) || 0 })}
               />
             </div>
             <div className="space-y-4">
@@ -151,9 +157,10 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
               <input 
                 required
                 type="number" 
+                placeholder="0"
                 className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none focus:border-brand-olive/30 transition-all"
-                value={recipe.estimatedCost}
-                onChange={e => setRecipe({ ...recipe, estimatedCost: parseInt(e.target.value) })}
+                value={recipe.estimatedCost || ''}
+                onChange={e => setRecipe({ ...recipe, estimatedCost: parseInt(e.target.value) || 0 })}
               />
             </div>
           </div>

@@ -7,13 +7,14 @@ interface NewsfeedProps {
   items: NewsfeedItem[];
   onRecipeClick: (recipeId: string) => void;
   onPostClick: () => void;
+  onUserClick?: (userId: string) => void;
   currentUserId?: string;
   onDeletePost?: (id: string) => void;
 }
 
 import Swipeable from './ui/Swipeable';
 
-export default function Newsfeed({ items, onRecipeClick, onPostClick, currentUserId, onDeletePost }: NewsfeedProps) {
+export default function Newsfeed({ items, onRecipeClick, onPostClick, onUserClick, currentUserId, onDeletePost }: NewsfeedProps) {
   const getTimeAgo = (dateString: string) => {
     const now = new Date();
     const past = new Date(dateString);
@@ -65,7 +66,11 @@ export default function Newsfeed({ items, onRecipeClick, onPostClick, currentUse
                 onClick={() => onRecipeClick(item.recipe_id)}
               >
                 <div 
-                  className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold shadow-md"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUserClick?.(item.user_id);
+                  }}
+                  className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold shadow-md cursor-pointer hover:scale-110 transition-transform"
                   style={{ backgroundColor: item.user_avatar_color || '#5A5A40' }}
                 >
                   {item.user_name.charAt(0).toUpperCase()}
@@ -74,7 +79,15 @@ export default function Newsfeed({ items, onRecipeClick, onPostClick, currentUse
                 <div className="flex-grow">
                   <div className="flex justify-between items-start mb-2">
                     <div className="text-sm">
-                      <span className="font-bold text-brand-ink">{item.user_name}</span>
+                      <span 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUserClick?.(item.user_id);
+                        }}
+                        className="font-bold text-brand-ink hover:text-brand-olive cursor-pointer"
+                      >
+                        {item.user_name}
+                      </span>
                       <span className="text-brand-ink-muted ml-1">
                         {item.type === 'cooked' && 'just cooked'}
                         {item.type === 'shared' && 'shared a new recipe'}

@@ -11,6 +11,7 @@ interface AIRecipeLabProps {
   favorites: string[];
   onToggleFavorite: (e: React.MouseEvent, id: string) => void;
   onRecipeClick: (recipe: Recipe) => void;
+  onNotify?: (title: string, message: string, type: any) => void;
 }
 
 const DIETS: DietPreference[] = ['Keto', 'Vegan', 'Vegetarian', 'High Protein', 'High Carbs'];
@@ -18,11 +19,12 @@ const BUDGETS: BudgetLevel[] = ['Budget', 'Moderate', 'Premium'];
 const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Any'];
 const CUISINES = ['Filipino', 'Italian', 'Mexican', 'Japanese', 'Indian', 'Mediterranean', 'Thai', 'American', 'French', 'Chinese', 'Korean', 'Middle Eastern', 'Spanish', 'Greek', 'Vietnamese'];
 
-export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorites, onToggleFavorite, onRecipeClick }: AIRecipeLabProps) {
+export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorites, onToggleFavorite, onRecipeClick, onNotify }: AIRecipeLabProps) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Recipe[]>([]);
   const [prefs, setPrefs] = useState<UserPreferences>(initialPreferences);
   const [customCuisine, setCustomCuisine] = useState('');
+  const [allergiesInput, setAllergiesInput] = useState(initialPreferences.allergies.join(', '));
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -33,8 +35,10 @@ export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorite
       };
       const generated = await generateRecipes(finalPrefs, true);
       setResults(generated);
-    } catch (error) {
+      onNotify?.('Experiment Successful', 'New culinary data has been synthesized.', 'recipe_ready');
+    } catch (error: any) {
       console.error("AI Generation failed:", error);
+      onNotify?.('Reactor Malfunction', error.message || 'Synthesis failed. Please wait for the system to cool down.', 'system');
     } finally {
       setLoading(false);
     }
@@ -167,8 +171,12 @@ export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorite
                 type="text"
                 placeholder="e.g. Peanuts, Dairy..."
                 className="w-full p-4 bg-white dark:bg-brand-ink/10 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none focus:border-brand-olive/30 text-sm"
-                value={prefs.allergies.join(', ')}
-                onChange={(e) => setPrefs({ ...prefs, allergies: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                value={allergiesInput}
+                onKeyDown={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  setAllergiesInput(e.target.value);
+                  setPrefs({ ...prefs, allergies: e.target.value.split(',').map(s => s.trim()).filter(Boolean) });
+                }}
               />
             </div>
 
@@ -189,7 +197,7 @@ export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorite
             {loading ? (
               <motion.div 
                 key="loading-lab"
-                initial={{ opacity: 0 }}
+                initial={{ opacity: 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 className="h-full flex flex-col items-center justify-center py-32 bg-white/20 dark:bg-brand-ink/5 rounded-[40px] border-2 border-dashed border-black/5 dark:border-white/5"

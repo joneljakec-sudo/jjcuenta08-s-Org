@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Recipe, MealPlan } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Utensils, Clock, Trash2, CheckCircle2, Package, Archive } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Utensils, Clock, Trash2, CheckCircle2, Package, Archive, Repeat } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { generateRecipes } from '../services/geminiService';
 
 interface MealPlannerProps {
   userRecipes: Recipe[];
@@ -15,6 +16,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
   const [currentDate, setCurrentDate] = useState(new Date());
   const [mealPlans, setMealPlans] = useState<MealPlan[]>([]);
   const [isAddingMeal, setIsAddingMeal] = useState<{ date: string; type: MealPlan['meal_type'] } | null>(null);
+  const [quickMealTitle, setQuickMealTitle] = useState('');
   const [loading, setLoading] = useState(true);
 
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -59,36 +61,120 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
         .select()
         .single();
 
-      if (error) throw error;
-      setMealPlans(prev => [...prev, data]);
+      if (error) {
+        // Fallback for guest or if table missing
+        const fallbackId = Math.random().toString(36).substr(2, 9);
+        const fallbackData = { ...newPlan, id: fallbackId } as MealPlan;
+        setMealPlans(prev => [...prev, fallbackData]);
+      } else {
+        setMealPlans(prev => [...prev, data]);
+      }
       setIsAddingMeal(null);
+      setQuickMealTitle('');
     } catch (err) {
       console.error('Error adding meal:', err);
     }
   };
 
+  const addQuickMeal = async () => {
+    if (!isAddingMeal || !quickMealTitle.trim()) return;
+
+    try {
+      const newPlan: Omit<MealPlan, 'id'> = {
+        user_id: userId,
+        recipe_id: `quick-${Math.random().toString(36).substr(2, 5)}`,
+        recipe_title: quickMealTitle.trim(),
+        recipe_image: 'https://images.unsplash.com/photo-1490818387583-1baba5e638af?auto=format&fit=crop&q=80&w=400',
+        date: isAddingMeal.date,
+        meal_type: isAddingMeal.type
+      };
+
+      const { data, error } = await supabase
+        .from('meal_plans')
+        .insert(newPlan)
+        .select()
+        .single();
+
+      if (error) {
+        const fallbackId = Math.random().toString(36).substr(2, 9);
+        const fallbackData = { ...newPlan, id: fallbackId } as MealPlan;
+        setMealPlans(prev => [...prev, fallbackData]);
+      } else {
+        setMealPlans(prev => [...prev, data]);
+      }
+      setIsAddingMeal(null);
+      setQuickMealTitle('');
+    } catch (err) {
+      console.error('Error adding quick meal:', err);
+    }
+  };
+
   const removeMeal = async (id: string) => {
     try {
-      const { error } = await supabase
+      await supabase
         .from('meal_plans')
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
       setMealPlans(prev => prev.filter(p => p.id !== id));
     } catch (err) {
       console.error('Error removing meal:', err);
     }
   };
 
+  const swapMeal = async (meal: MealPlan) => {
+    try {
+      setLoading(true);
+      // Fetch user prefs from profiles to ensure we have latest for generation
+      const { data: profile } = await supabase.from('profiles').select('preferences').eq('id', userId).single();
+      const userPrefs = profile?.preferences || { diet: 'Moderate' as any, budget: 'Moderate' as any, allergies: [], cuisines: [] };
+      
+      const suggested = await generateRecipes({ 
+        ...userPrefs, 
+        mealType: meal.meal_type as any 
+      });
+      
+      if (suggested && suggested.length > 0) {
+        const newRecipe = suggested[0];
+        
+        const { data, error } = await supabase
+          .from('meal_plans')
+          .update({
+            recipe_id: newRecipe.id,
+            recipe_title: newRecipe.title,
+            recipe_image: newRecipe.image,
+            is_meal_prep: false
+          })
+          .eq('id', meal.id)
+          .select()
+          .single();
+
+        if (error) {
+          setMealPlans(prev => prev.map(p => p.id === meal.id ? { 
+            ...p, 
+            recipe_id: newRecipe.id, 
+            recipe_title: newRecipe.title, 
+            recipe_image: newRecipe.image,
+            is_meal_prep: false
+          } : p));
+        } else {
+          setMealPlans(prev => prev.map(p => p.id === meal.id ? data : p));
+        }
+      }
+    } catch (err) {
+      console.error('Error swapping meal:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const toggleMealPrep = async (meal: MealPlan) => {
     try {
-      const { error } = await supabase
+      await supabase
         .from('meal_plans')
         .update({ is_meal_prep: !meal.is_meal_prep })
         .eq('id', meal.id);
 
-      if (error) throw error;
       setMealPlans(prev => prev.map(p => p.id === meal.id ? { ...p, is_meal_prep: !p.is_meal_prep } : p));
     } catch (err) {
       console.error('Error toggling meal prep:', err);
@@ -232,6 +318,17 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                               <button 
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  swapMeal(meal);
+                                }}
+                                className="p-1.5 bg-brand-olive text-white rounded-full shadow-lg hover:scale-110 transition-all"
+                                title="Swap with AI Recommendation"
+                                disabled={loading}
+                              >
+                                <Repeat size={10} className={loading ? 'animate-spin' : ''} />
+                              </button>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   removeMeal(meal.id);
                                 }}
                                 className="p-1.5 bg-red-500 text-white rounded-full shadow-lg hover:scale-110 transition-all"
@@ -313,7 +410,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-brand-ink/40 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-brand-ink/40 backdrop-blur-sm"
           >
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
@@ -331,6 +428,37 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
               </div>
 
               <div className="p-8 overflow-y-auto">
+                <div className="mb-8 p-6 bg-white dark:bg-brand-ink/10 rounded-3xl border-2 border-brand-olive/20 shadow-inner">
+                  <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-3">Quick Add Meal</label>
+                  <div className="flex gap-3">
+                    <input 
+                      autoFocus
+                      type="text"
+                      placeholder="What are you eating? (e.g. Scrambled Eggs)"
+                      className="flex-1 p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none focus:border-brand-olive/30 transition-all"
+                      value={quickMealTitle}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') addQuickMeal();
+                      }}
+                      onChange={(e) => setQuickMealTitle(e.target.value)}
+                    />
+                    <button 
+                      onClick={addQuickMeal}
+                      disabled={!quickMealTitle.trim()}
+                      className="bg-brand-olive text-white p-4 rounded-2xl disabled:opacity-50 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-olive/20"
+                    >
+                      <Plus size={24} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="flex-1 h-px bg-black/5 dark:bg-white/5" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-brand-ink-subtle">Or choose from your kitchen</span>
+                  <div className="flex-1 h-px bg-black/5 dark:bg-white/5" />
+                </div>
+
                 {availableRecipes.length === 0 ? (
                   <div className="text-center py-12">
                     <p className="text-xl text-brand-ink-muted italic mb-4">No recipes in your kitchen yet.</p>

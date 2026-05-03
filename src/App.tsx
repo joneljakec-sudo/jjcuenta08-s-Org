@@ -14,13 +14,14 @@ import CreateRecipeModal from './components/CreateRecipeModal';
 import Login from './components/Login';
 import UserProfile from './components/UserProfile';
 import Newsfeed from './components/Newsfeed';
+import PublicProfile from './components/PublicProfile';
 import MealPlanner from './components/MealPlanner';
 import AIRecipeLab from './components/AIRecipeLab';
 import { generateRecipes } from './services/geminiService';
-import { ChefHat, Search, SlidersHorizontal, LogOut, Sparkles, Loader2, Plus, Menu, X as CloseIcon, Utensils, Heart, MessageSquare, User as UserIcon, Settings, ChevronDown, Check, Moon, Sun, RefreshCw, Bell, Activity, Calendar, Microscope, Repeat } from 'lucide-react';
+import { ChefHat, Search, SlidersHorizontal, LogOut, Sparkles, Loader2, Plus, Menu, X as CloseIcon, Utensils, Heart, MessageSquare, User as UserIcon, Settings, ChevronDown, Check, Moon, Sun, RefreshCw, Bell, Activity, Calendar, Microscope, Repeat, Clock } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
-type View = 'dashboard' | 'my-recipes' | 'favorites' | 'feedbacks' | 'profile' | 'newsfeed' | 'meal-planner' | 'ai-lab' | 'cooked';
+type View = 'dashboard' | 'my-recipes' | 'favorites' | 'feedbacks' | 'profile' | 'newsfeed' | 'meal-planner' | 'ai-lab' | 'cooked' | 'public-profile';
 
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string; id: string; avatarColor?: string; avatarUrl?: string } | null>(null);
@@ -28,6 +29,7 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [viewedUser, setViewedUser] = useState<{ id: string; name: string; avatarColor: string; avatarUrl?: string } | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [filter, setFilter] = useState<string>('All');
   const [view, setView] = useState<View>('dashboard');
@@ -41,81 +43,117 @@ export default function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [newsfeedItems, setNewsfeedItems] = useState<NewsfeedItem[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [appError, setAppError] = useState<string | null>(null);
+
+  const isConfigured = !!(
+    (import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env.GEMINI_API_KEY)) && 
+    import.meta.env.VITE_SUPABASE_URL && 
+    import.meta.env.VITE_SUPABASE_ANON_KEY
+  );
+
+  useEffect(() => {
+    // Check if critical env vars are missing
+    if (!isConfigured) {
+      console.warn("Critical environment variables are missing. App features will be limited.");
+    }
+  }, [isConfigured]);
   const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme');
-      if (saved) return saved === 'dark';
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('theme');
+        if (saved) return saved === 'dark';
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+    } catch (e) {
+      console.warn("Theme initialization failed:", e);
     }
     return false;
   });
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+    try {
+      if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+      }
+    } catch (e) {
+      console.warn("Theme sync failed:", e);
     }
   }, [isDarkMode]);
 
   useEffect(() => {
     // Check active session
-    if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          setUser({
-            id: session.user.id,
-            name: session.user.email?.split('@')[0] || 'User',
-            email: session.user.email || '',
-          });
-          fetchUserData(session.user.id);
-        }
-      });
+    if (supabase && typeof supabase.auth !== 'undefined') {
+      try {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user) {
+            setUser({
+              id: session.user.id,
+              name: session.user.email?.split('@')[0] || 'User',
+              email: session.user.email || '',
+            });
+            fetchUserData(session.user.id);
+          }
+        }).catch(err => {
+          console.error("Supabase session check failed:", err);
+        });
 
-      // Listen for auth changes
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          setUser({
-            id: session.user.id,
-            name: session.user.email?.split('@')[0] || 'User',
-            email: session.user.email || '',
-          });
-          fetchUserData(session.user.id);
-        } else {
-          setUser(null);
-          setPreferences(null);
-        }
-      });
+        // Listen for auth changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+          if (session?.user) {
+            setUser({
+              id: session.user.id,
+              name: session.user.email?.split('@')[0] || 'User',
+              email: session.user.email || '',
+            });
+            fetchUserData(session.user.id);
+          } else {
+            setUser(null);
+            setPreferences(null);
+          }
+        });
 
-      return () => subscription.unsubscribe();
+        return () => subscription.unsubscribe();
+      } catch (e) {
+        console.error("Auth listener setup failed:", e);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (!user || user.id.startsWith('guest-')) return;
-    // Removed config check to allow attempt
+    if (!supabase) return;
 
     // Fetch initial notifications
     const fetchNotifications = async () => {
-      const { data } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      if (data) setNotifications(data);
+      try {
+        const { data } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        if (data) setNotifications(data);
+      } catch (err) {
+        console.error("Failed to fetch notifications:", err);
+      }
     };
 
     // Fetch initial newsfeed
     const fetchNewsfeed = async () => {
-      const { data } = await supabase
-        .from('newsfeed')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(30);
-      if (data) setNewsfeedItems(data);
+      try {
+        const { data } = await supabase
+          .from('newsfeed')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (data) setNewsfeedItems(data);
+      } catch (err) {
+        console.error("Failed to fetch newsfeed:", err);
+      }
     };
 
     fetchNotifications();
@@ -143,8 +181,10 @@ export default function App() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(notifChannel);
-      supabase.removeChannel(newsChannel);
+      if (supabase) {
+        supabase.removeChannel(notifChannel);
+        supabase.removeChannel(newsChannel);
+      }
     };
   }, [user]);
 
@@ -285,14 +325,15 @@ export default function App() {
           if (profile.preferences.calorieGoal) {
             setCalorieFilter(profile.preferences.calorieGoal);
           }
-          // If we have preferences, generate recipes if none exist
+      // If we have preferences, generate recipes if none exist
           if (recipes.length === 0) {
             setLoading(true);
             try {
               const generated = await generateRecipes(profile.preferences);
               setRecipes(generated);
-            } catch (genErr) {
+            } catch (genErr: any) {
               console.error('Error generating recipes:', genErr);
+              addNotification('Service Busy', genErr.message || 'The AI Chef is busy right now. Please try again later.', 'system');
             } finally {
               setLoading(false);
             }
@@ -383,10 +424,38 @@ export default function App() {
       
       // Trigger notification
       addNotification('Recipes Ready!', 'We have curated some fresh recipes just for you.', 'recipe_ready');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error completing onboarding:', err);
+      addNotification('Generation Failed', err.message || 'We couldn\'t generate your initial recipes. Try manually generating in the Lab.', 'system');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUserClick = async (userId: string) => {
+    if (userId === user?.id) {
+      setView('profile');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (data) {
+        setViewedUser({
+          id: data.id,
+          name: data.name || 'User',
+          avatarColor: data.avatar_color || '#5A5A40',
+          avatarUrl: data.avatar_url
+        });
+        setView('public-profile');
+      }
+    } catch (err) {
+      console.error('Error fetching public profile:', err);
     }
   };
 
@@ -499,25 +568,41 @@ export default function App() {
   const handleSaveUserRecipe = async (newRecipe: Recipe) => {
     if (!user) return;
 
-    if (!user.id.startsWith('guest-')) {
-      const { error } = await supabase
-        .from('user_recipes')
-        .insert({
-          user_id: user.id,
-          recipe_data: newRecipe
-        });
+    try {
+      if (!user.id.startsWith('guest-')) {
+        const { error: dbError } = await supabase
+          .from('user_recipes')
+          .insert({
+            user_id: user.id,
+            recipe_data: newRecipe
+          });
 
-      if (!error) {
+        if (dbError) throw dbError;
+
         setUserRecipes([newRecipe, ...userRecipes]);
         
         // Trigger notification and newsfeed
         addNotification('Recipe Shared', `Your recipe "${newRecipe.title}" is now live!`, 'system');
         addNewsfeedItem('shared', newRecipe);
+        
+        // Return success for the modal
+        return true;
       } else {
         setUserRecipes([newRecipe, ...userRecipes]);
+        return true;
       }
-    } else {
-      setUserRecipes([newRecipe, ...userRecipes]);
+    } catch (err: any) {
+      console.error('Error saving user recipe:', err);
+      // Detailed error for the user
+      const isTableMissing = err.message?.includes('does not exist');
+      const isRLSError = err.message?.includes('insufficient permissions');
+      
+      let msg = 'Failed to save recipe.';
+      if (isTableMissing) msg = 'Database error: Tables not found. Please run the setup_supabase.sql in your Supabase SQL Editor.';
+      if (isRLSError) msg = 'Database error: Insufficient permissions. Please check your Supabase RLS policies.';
+      
+      alert(msg + '\n\n' + err.message);
+      return false;
     }
   };
 
@@ -536,10 +621,16 @@ export default function App() {
       });
     }
 
-    const generated = await generateRecipes(updatedPrefs);
-    setRecipes(generated);
-    addNotification('Recipes Updated!', 'Your recommendations have been refreshed based on your new preferences.', 'recipe_ready');
-    setLoading(false);
+    try {
+      const generated = await generateRecipes(updatedPrefs);
+      setRecipes(generated);
+      addNotification('Recipes Updated!', 'Your recommendations have been refreshed based on your new preferences.', 'recipe_ready');
+      setLoading(false);
+    } catch (err: any) {
+      console.error('Error refreshing recipes:', err);
+      addNotification('Refresh Failed', err.message || 'We couldn\'t refresh your recipes right now.', 'system');
+      setLoading(false);
+    }
   };
 
   const handleUpdateProfile = async (updates: { name?: string; avatarColor?: string; avatarUrl?: string }) => {
@@ -567,6 +658,48 @@ export default function App() {
     setRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
     setUserRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
   };
+
+  if (!isConfigured && !user) {
+    return (
+      <div className="min-h-screen bg-[#FDFCF6] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8 border border-black/5">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Settings className="text-red-500" size={32} />
+          </div>
+          <h1 className="text-2xl font-serif font-bold text-gray-900 mb-4">Configuration Required</h1>
+          <p className="text-gray-600 mb-6 leading-relaxed">
+            Savoria requires environment variables to be set up in your hosting provider (like Vercel). 
+            Please check your project settings and add:
+          </p>
+          <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left font-mono text-sm space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-800">VITE_GEMINI_API_KEY</span>
+              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-800">VITE_SUPABASE_URL</span>
+              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-800">VITE_SUPABASE_ANON_KEY</span>
+              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <button 
+              onClick={() => setUser({ id: 'guest-preview', name: 'Guest Chef', email: 'guest@example.com' })}
+              className="w-full bg-[#4A5D23] text-white font-medium py-3 rounded-xl hover:bg-[#3A4A1C] transition-all shadow-lg shadow-[#4A5D23]/20"
+            >
+              Continue as Guest (Limited)
+            </button>
+            <p className="text-xs text-gray-400 font-sans">
+              Note: Key features like AI recipe generation and cloud saving will be disabled until configured.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <Login onLogin={setUser} />;
@@ -624,6 +757,21 @@ export default function App() {
               {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
+            {/* Logout Button (Quick Access) */}
+            <button 
+              onClick={async () => {
+                if (confirm('Log out of Savoria?')) {
+                  await supabase.auth.signOut();
+                  setPreferences(null);
+                  setUser(null);
+                }
+              }}
+              className="flex p-3 rounded-full border-2 border-black/5 hover:border-red-500/30 hover:text-red-500 transition-all bg-white dark:bg-brand-ink/10 text-brand-ink-subtle shadow-sm"
+              title="Logout"
+            >
+              <LogOut size={18} />
+            </button>
+
             {/* User Avatar - Clickable to go to Profile */}
             <button 
               onClick={() => setView('profile')}
@@ -646,215 +794,18 @@ export default function App() {
               </div>
             </button>
 
-            {/* Menu Button (All Screens) */}
-            <div className="relative">
-              <button 
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-full border-2 border-black/5 hover:border-brand-olive/30 transition-all font-bold uppercase tracking-widest text-sm bg-white dark:bg-brand-ink/10 shadow-sm"
-              >
-                <Menu size={18} className="text-brand-olive" />
-                <span>Menu</span>
-              </button>
-
-              {/* Dropdown Menu */}
-              <AnimatePresence>
-                {isMenuOpen && (
-                  <>
-                    {/* Backdrop to close menu */}
-                    <div 
-                      className="fixed inset-0 z-40" 
-                      onClick={() => setIsMenuOpen(false)} 
-                    />
-                    <motion.div
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className="absolute right-0 mt-4 w-72 bg-white dark:bg-brand-card rounded-[32px] shadow-2xl shadow-black/10 border border-black/5 dark:border-white/10 overflow-hidden z-50"
-                    >
-                      <div className="p-4 space-y-2">
-                        {/* Quick Preferences Section */}
-                        <div className="px-4 py-4 bg-brand-cream/30 rounded-2xl mb-2">
-                          <div className="flex items-center gap-2 mb-4 text-xs font-bold uppercase tracking-widest text-brand-ink-subtle">
-                            <Settings size={12} />
-                            Quick Preferences
-                          </div>
-                          
-                          <div className="space-y-4">
-                            {/* Theme Toggle */}
-                            <div className="flex items-center justify-between">
-                              <label className="text-xs font-bold uppercase tracking-widest text-brand-ink-subtle">Dark Mode</label>
-                              <button 
-                                onClick={() => setIsDarkMode(!isDarkMode)}
-                                className={`w-10 h-5 rounded-full relative transition-colors duration-300 ${isDarkMode ? 'bg-brand-olive' : 'bg-brand-ink/10'}`}
-                              >
-                                <motion.div 
-                                  animate={{ x: isDarkMode ? 20 : 2 }}
-                                  className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
-                                />
-                              </button>
-                            </div>
-
-                            {/* Diet Selector */}
-                            <div>
-                              <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Diet</label>
-                              <div className="flex flex-wrap gap-1">
-                                {['Keto', 'Vegan', 'Vegetarian', 'High Protein', 'High Carbs'].map(d => (
-                                  <button
-                                    key={d}
-                                    onClick={() => handleUpdatePreferences({ diet: d as any })}
-                                    className={`px-2 py-1 rounded-md text-xs font-bold transition-all ${
-                                      preferences.diet === d 
-                                        ? 'bg-brand-olive text-white' 
-                                        : 'bg-white dark:bg-white/10 text-brand-ink-subtle hover:bg-brand-olive/10'
-                                    }`}
-                                  >
-                                    {d}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Budget Selector */}
-                            <div>
-                              <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Budget</label>
-                              <div className="flex gap-1">
-                                {['Budget', 'Moderate', 'Premium'].map(b => (
-                                  <button
-                                    key={b}
-                                    onClick={() => handleUpdatePreferences({ budget: b as any })}
-                                    className={`flex-1 py-1 rounded-md text-xs font-bold transition-all ${
-                                      preferences.budget === b 
-                                        ? 'bg-brand-olive text-white' 
-                                        : 'bg-white dark:bg-white/10 text-brand-ink-subtle hover:bg-brand-olive/10'
-                                    }`}
-                                  >
-                                    {b === 'Moderate' ? 'Regular' : b}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Notifications Section */}
-                        <div className="px-2 pb-2 border-b border-black/5 dark:border-white/5 mb-2">
-                          <button 
-                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                            className={`flex items-center justify-between w-full px-4 py-3 rounded-2xl text-sm font-bold uppercase tracking-widest transition-all ${
-                              isNotificationOpen 
-                                ? 'bg-brand-olive text-white shadow-lg shadow-brand-olive/20' 
-                                : 'text-brand-ink-muted hover:bg-brand-olive/5 hover:text-brand-ink'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <Bell size={18} />
-                              Notifications
-                            </div>
-                            {notifications.filter(n => !n.read).length > 0 && (
-                              <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                {notifications.filter(n => !n.read).length}
-                              </span>
-                            )}
-                          </button>
-
-                          <AnimatePresence>
-                            {isNotificationOpen && (
-                              <motion.div
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="overflow-hidden"
-                              >
-                                <div className="mt-2 max-h-[300px] overflow-y-auto rounded-2xl bg-brand-cream/30 dark:bg-brand-ink/5 border border-black/5 dark:border-white/5">
-                                  {notifications.length === 0 ? (
-                                    <div className="p-8 text-center">
-                                      <p className="text-xs text-brand-ink-muted serif italic">No notifications yet.</p>
-                                    </div>
-                                  ) : (
-                                    <div className="divide-y divide-black/5 dark:divide-white/5">
-                                      {notifications.map(n => (
-                                        <div 
-                                          key={n.id} 
-                                          className={`p-4 hover:bg-white/50 dark:hover:bg-white/5 transition-colors cursor-pointer ${!n.read ? 'bg-brand-olive/5' : ''}`}
-                                          onClick={async () => {
-                                            if (!n.read) {
-                                              await supabase.from('notifications').update({ read: true }).eq('id', n.id);
-                                              setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
-                                            }
-                                            setIsMenuOpen(false);
-                                            setIsNotificationOpen(false);
-                                          }}
-                                        >
-                                          <h4 className={`text-xs font-bold mb-1 ${!n.read ? 'text-brand-ink' : 'text-brand-ink-muted'}`}>{n.title}</h4>
-                                          <p className="text-[10px] text-brand-ink-subtle line-clamp-2">{n.message}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {notifications.length > 0 && (
-                                    <button 
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if (!user) return;
-                                        await supabase.from('notifications').delete().eq('user_id', user.id);
-                                        setNotifications([]);
-                                      }}
-                                      className="w-full p-2 text-[10px] font-bold uppercase tracking-widest text-brand-ink-muted hover:text-brand-olive border-t border-black/5 dark:border-white/5"
-                                    >
-                                      Clear All
-                                    </button>
-                                  )}
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-
-                        {navItems.map(item => (
-                          <button 
-                            key={item.id}
-                            onClick={() => {
-                              setView(item.id as View);
-                              setIsMenuOpen(false);
-                            }}
-                            className={`flex items-center gap-3 w-full px-6 py-4 rounded-2xl text-base font-bold uppercase tracking-widest transition-all ${
-                              view === item.id 
-                                ? 'bg-brand-olive text-white shadow-lg shadow-brand-olive/20' 
-                                : 'text-brand-ink-muted hover:bg-brand-olive/5 hover:text-brand-ink'
-                            }`}
-                          >
-                            {item.id === 'dashboard' && <Sparkles size={18} />}
-                            {item.id === 'ai-lab' && <Microscope size={18} />}
-                            {item.id === 'newsfeed' && <Repeat size={18} />}
-                            {item.id === 'meal-planner' && <Calendar size={18} />}
-                            {item.id === 'my-recipes' && <Utensils size={18} />}
-                            {item.id === 'favorites' && <Heart size={18} />}
-                            {item.id === 'cooked' && <Clock size={18} />}
-                            {item.id === 'feedbacks' && <MessageSquare size={18} />}
-                            {item.label}
-                          </button>
-                        ))}
-                        <div className="pt-2 mt-2 border-t border-black/5">
-                          <button 
-                            onClick={async () => {
-                              await supabase.auth.signOut();
-                              setPreferences(null);
-                              setUser(null);
-                            }}
-                            className="flex items-center gap-3 w-full px-6 py-4 rounded-2xl text-base font-bold uppercase tracking-widest text-brand-ink-muted hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 transition-all"
-                          >
-                            <LogOut size={18} />
-                            Logout
-                          </button>
-                        </div>
-                      </div>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+              {/* Menu Button */}
+              <div className="relative">
+                <button 
+                  onClick={() => setIsMenuOpen(!isMenuOpen)}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-full border-2 border-black/5 hover:border-brand-olive/30 transition-all font-bold uppercase tracking-widest text-sm bg-white dark:bg-brand-ink/10 shadow-sm"
+                >
+                  {isMenuOpen ? <CloseIcon size={18} className="text-brand-olive" /> : <Menu size={18} className="text-brand-olive" />}
+                  <span>Menu</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 pt-12">
@@ -862,7 +813,7 @@ export default function App() {
           {view === 'dashboard' && (
             <motion.div
               key="dashboard"
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 1, y: 0 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
@@ -909,8 +860,9 @@ export default function App() {
                             const fresh = await generateRecipes(updatedPrefs, true);
                             setRecipes(fresh);
                             addNotification('Recipes Refreshed!', `Curated fresh recipes around ${calorieFilter} kcal.`, 'recipe_ready');
-                          } catch (err) {
+                          } catch (err: any) {
                             console.error("Refresh failed:", err);
+                            addNotification('Sync Interrupted', err.message || 'The AI Chef is cooling down. Try again in a minute.', 'system');
                           } finally {
                             setLoading(false);
                           }
@@ -961,7 +913,7 @@ export default function App() {
               {/* Recipe Grid */}
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-32">
-                  <Loader2 className="animate-spin text-brand-olive mb-4" size={48} />
+                  <div className="w-12 h-12 border-4 border-brand-olive border-t-transparent rounded-full animate-spin mb-4"></div>
                   <p className="text-brand-ink-muted font-serif italic text-xl">Curating your personalized recipes...</p>
                 </div>
               ) : (
@@ -1011,8 +963,24 @@ export default function App() {
                   if (recipe) setSelectedRecipe(recipe);
                 }}
                 onPostClick={() => setIsCreateModalOpen(true)}
+                onUserClick={handleUserClick}
                 currentUserId={user?.id}
                 onDeletePost={deleteNewsfeedItem}
+              />
+            </motion.div>
+          )}
+
+          {view === 'public-profile' && viewedUser && (
+            <motion.div
+              key="public-profile"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <PublicProfile 
+                user={viewedUser}
+                onBack={() => setView('newsfeed')}
+                onRecipeClick={(recipe) => setSelectedRecipe(recipe)}
               />
             </motion.div>
           )}
@@ -1045,6 +1013,7 @@ export default function App() {
                 favorites={favorites}
                 onToggleFavorite={toggleFavorite}
                 onRecipeClick={setSelectedRecipe}
+                onNotify={(title, msg, type) => addNotification(title, msg, type)}
                 onSaveRecipe={(recipe) => {
                   setRecipes(prev => [recipe, ...prev]);
                   addNotification('New Discovery!', `You've generated ${recipe.title} in the Laboratory.`, 'recipe_ready');
@@ -1071,6 +1040,11 @@ export default function App() {
                 onUpdate={handleUpdateProfile}
                 onBack={() => setView('dashboard')}
                 onDeleteHistory={clearAllHistory}
+                onLogout={async () => {
+                  await supabase.auth.signOut();
+                  setPreferences(null);
+                  setUser(null);
+                }}
               />
             </motion.div>
           )}
@@ -1121,6 +1095,204 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      {/* Global Menu Overlay */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div 
+              key="menu-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-brand-ink/10 backdrop-blur-md z-50" 
+              onClick={() => setIsMenuOpen(false)} 
+            />
+            {/* Menu Content */}
+            <motion.div
+              key="menu-content"
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className="fixed right-6 top-24 w-80 bg-white dark:bg-brand-card rounded-[32px] shadow-2xl shadow-black/20 border border-black/5 dark:border-white/10 overflow-hidden z-[60]"
+            >
+              <div className="p-4 space-y-2">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-black/5 mb-2">
+                  <span className="text-sm font-serif font-bold italic">Menu</span>
+                  <button onClick={() => setIsMenuOpen(false)} className="p-2 hover:bg-black/5 rounded-full transition-all">
+                    <CloseIcon size={18} className="text-brand-ink-muted" />
+                  </button>
+                </div>
+
+                {/* Quick Preferences Section */}
+                <div className="px-4 py-4 bg-brand-cream/30 rounded-2xl mb-2">
+                  <div className="flex items-center gap-2 mb-4 text-xs font-bold uppercase tracking-widest text-brand-ink-subtle">
+                    <Settings size={12} />
+                    Quick Preferences
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Theme Toggle */}
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-widest text-brand-ink-subtle">Dark Mode</label>
+                      <button 
+                        onClick={() => setIsDarkMode(!isDarkMode)}
+                        className={`w-10 h-5 rounded-full relative transition-colors duration-300 ${isDarkMode ? 'bg-brand-olive' : 'bg-brand-ink/10'}`}
+                      >
+                        <motion.div 
+                          animate={{ x: isDarkMode ? 20 : 2 }}
+                          className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+                        />
+                      </button>
+                    </div>
+
+                    {/* Diet Selector */}
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Diet</label>
+                      <div className="flex flex-wrap gap-1">
+                        {['Keto', 'Vegan', 'Vegetarian', 'High Protein', 'High Carbs'].map(d => (
+                          <button
+                            key={d}
+                            onClick={() => handleUpdatePreferences({ diet: d as any })}
+                            className={`px-2 py-1 rounded-md text-xs font-bold transition-all ${
+                              preferences.diet === d 
+                                ? 'bg-brand-olive text-white' 
+                                : 'bg-white dark:bg-white/10 text-brand-ink-subtle hover:bg-brand-olive/10'
+                            }`}
+                          >
+                            {d}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Budget Selector */}
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Budget</label>
+                      <div className="flex gap-1">
+                        {['Budget', 'Moderate', 'Premium'].map(b => (
+                          <button
+                            key={b}
+                            onClick={() => handleUpdatePreferences({ budget: b as any })}
+                            className={`flex-1 py-1 rounded-md text-xs font-bold transition-all ${
+                              preferences.budget === b 
+                                ? 'bg-brand-olive text-white' 
+                                : 'bg-white dark:bg-white/10 text-brand-ink-subtle hover:bg-brand-olive/10'
+                            }`}
+                          >
+                            {b === 'Moderate' ? 'Regular' : b}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Notifications Section */}
+                <div className="px-2 pb-2 border-b border-black/5 dark:border-white/5 mb-2">
+                  <button 
+                    onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                    className={`flex items-center justify-between w-full px-4 py-3 rounded-2xl text-sm font-bold uppercase tracking-widest transition-all ${
+                      isNotificationOpen 
+                        ? 'bg-brand-olive text-white shadow-lg shadow-brand-olive/20' 
+                        : 'text-brand-ink-muted hover:bg-brand-olive/5 hover:text-brand-ink'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Bell size={18} />
+                      Notifications
+                    </div>
+                    {notifications.filter(n => !n.read).length > 0 && (
+                      <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        {notifications.filter(n => !n.read).length}
+                      </span>
+                    )}
+                  </button>
+
+                  <AnimatePresence>
+                    {isNotificationOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-2 max-h-[300px] overflow-y-auto rounded-2xl bg-brand-cream/30 dark:bg-brand-ink/5 border border-black/5 dark:border-white/5">
+                          {notifications.length === 0 ? (
+                            <div className="p-8 text-center">
+                              <p className="text-xs text-brand-ink-muted serif italic">No notifications yet.</p>
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-black/5 dark:divide-white/5">
+                              {notifications.map(n => (
+                                <div 
+                                  key={n.id} 
+                                  className={`p-4 hover:bg-white/50 dark:hover:bg-white/5 transition-colors cursor-pointer ${!n.read ? 'bg-brand-olive/5' : ''}`}
+                                  onClick={async () => {
+                                    if (!n.read) {
+                                      await supabase.from('notifications').update({ read: true }).eq('id', n.id);
+                                      setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
+                                    }
+                                    setIsMenuOpen(false);
+                                    setIsNotificationOpen(false);
+                                  }}
+                                >
+                                  <h4 className={`text-xs font-bold mb-1 ${!n.read ? 'text-brand-ink' : 'text-brand-ink-muted'}`}>{n.title}</h4>
+                                  <p className="text-[10px] text-brand-ink-subtle line-clamp-2">{n.message}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {navItems.map(item => (
+                  <button 
+                    key={item.id}
+                    onClick={() => {
+                      setView(item.id as View);
+                      setIsMenuOpen(false);
+                    }}
+                    className={`flex items-center gap-3 w-full px-6 py-3 rounded-2xl text-base font-bold uppercase tracking-widest transition-all ${
+                      view === item.id 
+                        ? 'bg-brand-olive text-white shadow-lg shadow-brand-olive/20' 
+                        : 'text-brand-ink-muted hover:bg-brand-olive/5 hover:text-brand-ink'
+                    }`}
+                  >
+                    {item.id === 'dashboard' && <Sparkles size={18} />}
+                    {item.id === 'ai-lab' && <Microscope size={18} />}
+                    {item.id === 'newsfeed' && <Repeat size={18} />}
+                    {item.id === 'meal-planner' && <Calendar size={18} />}
+                    {item.id === 'my-recipes' && <Utensils size={18} />}
+                    {item.id === 'favorites' && <Heart size={18} />}
+                    {item.id === 'cooked' && <Clock size={18} />}
+                    {item.id === 'feedbacks' && <MessageSquare size={18} />}
+                    {item.label}
+                  </button>
+                ))}
+                <div className="pt-2 mt-2 border-t border-black/5">
+                  <button 
+                    onClick={async () => {
+                      await supabase.auth.signOut();
+                      setPreferences(null);
+                      setUser(null);
+                    }}
+                    className="flex items-center gap-3 w-full px-6 py-4 rounded-2xl text-base font-bold uppercase tracking-widest text-brand-ink-muted hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 transition-all"
+                  >
+                    <LogOut size={18} />
+                    Logout
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

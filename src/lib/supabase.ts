@@ -1,14 +1,42 @@
 import { createClient } from '@supabase/supabase-js';
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || 'https://aukqqlesyvtllxiqjpxs.supabase.co';
-const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_DCspepUMSnA93LirTiaDTw_yCPZBfQ9';
+const rawUrl = import.meta.env.VITE_SUPABASE_URL;
+const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Clean up the URL and Key in case there are quotes or trailing spaces from the environment
-const supabaseUrl = typeof rawUrl === 'string' ? rawUrl.trim().replace(/^["'](.+)["']$/, '$1') : '';
-const supabaseAnonKey = typeof rawKey === 'string' ? rawKey.trim().replace(/^["'](.+)["']$/, '$1') : '';
+// Clean up the URL and Key
+const cleanString = (val: any) => {
+  if (typeof val !== 'string') return '';
+  const cleaned = val.trim().replace(/^["']|["']$/g, '');
+  return (cleaned === 'undefined' || cleaned === 'null') ? '' : cleaned;
+};
 
-if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
-  console.error('Invalid or missing Supabase URL. Please check your VITE_SUPABASE_URL secret.');
+const supabaseUrl = cleanString(rawUrl);
+const supabaseAnonKey = cleanString(rawKey);
+
+// Ensure the URL is just the origin and has no trailing slash
+let finalUrl = supabaseUrl;
+try {
+  if (supabaseUrl.startsWith('http')) {
+    const urlObj = new URL(supabaseUrl);
+    finalUrl = urlObj.origin;
+  }
+} catch (e) {
+  console.error('Supabase URL parsing failed:', e);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+let supabase: any;
+try {
+  if (!finalUrl || !finalUrl.startsWith('http')) {
+    console.error('Invalid Supabase URL:', finalUrl);
+    supabase = null;
+  } else {
+    // Diagnostic log (visible in browser console for the user)
+    console.log('Supabase initialized with URL:', finalUrl.substring(0, 15) + '...');
+    supabase = createClient(finalUrl, supabaseAnonKey);
+  }
+} catch (e) {
+  console.error('Supabase client creation failed:', e);
+  supabase = null;
+}
+
+export { supabase };

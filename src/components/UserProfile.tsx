@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { UserProfileData } from '../types';
-import { User, Camera, Palette, Check, ArrowLeft, Loader2 } from 'lucide-react';
+import { User, Camera, Palette, Check, ArrowLeft, Loader2, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface UserProfileProps {
@@ -9,6 +9,7 @@ interface UserProfileProps {
   onUpdate: (updates: Partial<UserProfileData>) => void;
   onBack: () => void;
   onDeleteHistory?: () => void;
+  onLogout?: () => void;
 }
 
 const AVATAR_COLORS = [
@@ -22,7 +23,7 @@ const AVATAR_COLORS = [
   '#E24AB4', // Pink
 ];
 
-export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory }: UserProfileProps) {
+export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory, onLogout }: UserProfileProps) {
   const [name, setName] = useState(profile.name);
   const [selectedColor, setSelectedColor] = useState(profile.avatarColor || AVATAR_COLORS[0]);
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl || '');
@@ -73,13 +74,27 @@ export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory
 
   return (
     <div className="max-w-2xl mx-auto py-12 px-6">
-      <button 
-        onClick={onBack}
-        className="flex items-center gap-2 text-brand-ink-muted hover:text-brand-ink transition-colors mb-8 font-bold uppercase tracking-widest text-xs"
-      >
-        <ArrowLeft size={16} />
-        Back to Dashboard
-      </button>
+      <div className="flex items-center justify-between mb-8">
+        <button 
+          onClick={onBack}
+          className="flex items-center gap-2 text-brand-ink-muted hover:text-brand-ink transition-colors font-bold uppercase tracking-widest text-xs"
+        >
+          <ArrowLeft size={16} />
+          Back to Dashboard
+        </button>
+
+        <button 
+          onClick={() => {
+            if (confirm('Are you sure you want to log out?')) {
+              onLogout?.();
+            }
+          }}
+          className="flex items-center gap-2 text-red-500 hover:text-red-600 transition-colors font-bold uppercase tracking-widest text-xs"
+        >
+          <LogOut size={16} />
+          Logout
+        </button>
+      </div>
 
       <div className="card p-8 md:p-12">
         <div className="flex flex-col items-center mb-12">
@@ -116,6 +131,10 @@ export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory
           </div>
           <h2 className="text-3xl font-serif">Your Profile</h2>
           <p className="text-base font-bold text-brand-ink-subtle">{profile.email}</p>
+          <div className="mt-4 px-3 py-1 bg-brand-olive/10 text-brand-olive text-[10px] font-bold uppercase tracking-widest rounded-full flex items-center gap-2">
+            <span className="w-1.5 h-1.5 bg-brand-olive rounded-full animate-pulse" />
+            Public Profile Active
+          </div>
         </div>
 
         <div className="space-y-8">

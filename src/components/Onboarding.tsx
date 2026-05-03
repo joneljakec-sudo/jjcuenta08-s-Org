@@ -21,6 +21,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     cuisines: [],
     mealType: 'Any'
   });
+  const [allergiesInput, setAllergiesInput] = useState('');
 
   const nextStep = () => setStep(s => s + 1);
   const prevStep = () => setStep(s => s - 1);
@@ -37,7 +38,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-brand-cream">
       <motion.div 
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 1, y: 0 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-2xl w-full card p-12"
       >
@@ -193,8 +194,13 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             
             <textarea
               placeholder="e.g. Peanuts, Shellfish, Dairy (comma separated)"
-              className="w-full p-6 rounded-2xl outline-none min-h-[150px] mb-12"
-              onChange={(e) => setPrefs({ ...prefs, allergies: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+              className="w-full p-6 bg-white dark:bg-brand-ink/10 border-2 border-black/5 rounded-2xl outline-none min-h-[150px] mb-12"
+              autoFocus
+              value={allergiesInput}
+              onChange={(e) => {
+                setAllergiesInput(e.target.value);
+                setPrefs({ ...prefs, allergies: e.target.value.split(',').map(s => s.trim()).filter(Boolean) });
+              }}
             />
 
             <div className="flex gap-4">

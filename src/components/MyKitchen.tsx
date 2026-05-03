@@ -72,7 +72,7 @@ export default function MyKitchen({
           {activeTab === 'favorites' && (
             <motion.div
               key="favorites"
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 1, y: 0 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
             >
@@ -103,7 +103,7 @@ export default function MyKitchen({
           {activeTab === 'cooked' && (
             <motion.div
               key="cooked"
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 1, y: 0 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
             >
@@ -134,7 +134,7 @@ export default function MyKitchen({
           {activeTab === 'posts' && (
             <motion.div
               key="posts"
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 1, y: 0 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
             >
@@ -173,7 +173,7 @@ export default function MyKitchen({
           {activeTab === 'feedbacks' && (
             <motion.div
               key="feedbacks"
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 1, y: 0 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
             >

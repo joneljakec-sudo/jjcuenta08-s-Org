@@ -15,7 +15,7 @@ export default function Login({ onLogin }: LoginProps) {
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<AuthMode>('signin');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<React.ReactNode | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const isSupabaseConfigured = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -82,7 +82,44 @@ export default function Login({ onLogin }: LoginProps) {
       if (msg.includes('invalid url path') || msg.includes('Failed to fetch')) {
         msg = 'Connection error. Please check if VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are correctly set in Settings > Secrets and restart the dev server.';
       }
-      setError(msg);
+      if (msg.toLowerCase().includes('email not confirmed')) {
+        setError(
+          <div className="flex flex-col gap-3">
+            <span className="text-red-600 font-bold">Email Not Confirmed</span>
+            <p className="text-brand-ink-muted text-xs leading-relaxed">
+              Your email hasn't been verified yet. Please check your inbox (and spam) for a confirmation link.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button 
+                type="button"
+                onClick={async () => {
+                  try {
+                    const { error: resendError } = await supabase.auth.resend({
+                      type: 'signup',
+                      email: email,
+                    });
+                    if (resendError) throw resendError;
+                    setSuccessMessage('Confirmation email resent! Please check your inbox.');
+                    setError(null);
+                  } catch (err: any) {
+                    setError('Failed to resend: ' + err.message);
+                  }
+                }}
+                className="w-full py-2 bg-brand-olive/10 text-brand-olive rounded-xl font-bold text-xs hover:bg-brand-olive/20 transition-all underline underline-offset-4"
+              >
+                Resend confirmation email
+              </button>
+            </div>
+            <div className="pt-2 border-t border-red-100 mt-1">
+              <p className="text-[10px] text-red-400 font-medium italic">
+                Developer Note: You can disable this by going to your Supabase Dashboard &rarr; Authentication &rarr; Providers &rarr; Email and turning off "Confirm email".
+              </p>
+            </div>
+          </div>
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -91,7 +128,7 @@ export default function Login({ onLogin }: LoginProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-brand-cream">
       <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 1, scale: 1 }}
         animate={{ opacity: 1, scale: 1 }}
         className="max-w-md w-full card p-10 text-center"
       >
