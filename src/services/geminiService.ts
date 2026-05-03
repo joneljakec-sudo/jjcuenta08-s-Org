@@ -5,11 +5,13 @@ let isQuotaExhausted = false;
 let quotaResetTime = 0;
 
 const getAI = () => {
-  // Safe access to environment variables in both Node.js and Browser/Vite environments
-  const apiKey = (import.meta.env?.VITE_GEMINI_API_KEY as string) || (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : null);
+  // Priority 1: process.env (AI Studio preference)
+  // Priority 2: VITE_ environment variable (Vercel/Vite preference)
+  const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || 
+                 (import.meta.env?.VITE_GEMINI_API_KEY as string);
   
   if (!apiKey) {
-    console.warn("GEMINI_API_KEY is not configured. AI features will be limited.");
+    console.warn("GEMINI_API_KEY is not configured.");
     return null;
   }
   return new GoogleGenAI({ apiKey });
@@ -219,7 +221,7 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
     6. imageSearchQuery: A short 2-3 word query for finding a food image of this dish.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
