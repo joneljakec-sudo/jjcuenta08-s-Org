@@ -46,15 +46,16 @@ export default function App() {
   const [appError, setAppError] = useState<string | null>(null);
 
   const isConfigured = !!(
-    (import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env.GEMINI_API_KEY)) && 
-    import.meta.env.VITE_SUPABASE_URL && 
+    (import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY.startsWith('AIza')) && 
+    (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_URL.startsWith('https://')) && 
     import.meta.env.VITE_SUPABASE_ANON_KEY
   );
 
+  const [showConfigForce, setShowConfigForce] = useState(false);
+
   useEffect(() => {
-    // Check if critical env vars are missing
     if (!isConfigured) {
-      console.warn("Critical environment variables are missing. App features will be limited.");
+      console.warn("Critical environment variables are missing or incorrectly formatted.");
     }
   }, [isConfigured]);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -659,41 +660,85 @@ export default function App() {
     setUserRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
   };
 
-  if (!isConfigured && !user) {
+  if (!isConfigured && !user && !showConfigForce) {
+    const geminiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    
     return (
       <div className="min-h-screen bg-[#FDFCF6] flex items-center justify-center p-6 text-center">
         <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8 border border-black/5">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Settings className="text-red-500" size={32} />
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Settings className="text-amber-600" size={32} />
           </div>
-          <h1 className="text-2xl font-serif font-bold text-gray-900 mb-4">Configuration Required</h1>
-          <p className="text-gray-600 mb-6 leading-relaxed">
-            Savoria requires environment variables to be set up in your hosting provider (like Vercel). 
-            Please check your project settings and add:
+          <h1 className="text-2xl font-serif font-bold text-gray-900 mb-4">Final Configuration Needed</h1>
+          <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+            Savoria needs these variables in your <strong>Vercel Project Settings</strong>. 
+            Frontend variables <strong>must</strong> start with <code className="bg-gray-100 px-1 rounded">VITE_</code>.
           </p>
-          <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left font-mono text-sm space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-800">VITE_GEMINI_API_KEY</span>
-              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+
+          <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left font-mono text-xs space-y-3">
+            <div className="flex justify-between items-center pb-1 border-b border-gray-200">
+              <span className="text-gray-400">VARIABLE</span>
+              <span className="text-gray-400">STATUS</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-800">VITE_SUPABASE_URL</span>
-              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+            
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-800">VITE_GEMINI_API_KEY</span>
+                {geminiKey.startsWith('AIza') ? (
+                  <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">READY</span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-bold">MISSING</span>
+                )}
+              </div>
+              {!geminiKey.startsWith('AIza') && geminiKey.length > 0 && (
+                <p className="text-[9px] text-amber-600 mt-0.5">Value doesn't look like a Gemini Key (should start with AIza...)</p>
+              )}
             </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-800">VITE_SUPABASE_URL</span>
+                {supabaseUrl.startsWith('https://') ? (
+                  <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">READY</span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-bold">MISSING</span>
+                )}
+              </div>
+              {!supabaseUrl.startsWith('https://') && supabaseUrl.length > 0 && (
+                <p className="text-[9px] text-amber-600 mt-0.5">Should start with https://</p>
+              )}
+            </div>
+
             <div className="flex justify-between items-center">
               <span className="text-gray-800">VITE_SUPABASE_ANON_KEY</span>
-              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full">Missing</span>
+              {import.meta.env.VITE_SUPABASE_ANON_KEY ? (
+                <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">READY</span>
+              ) : (
+                <span className="text-[10px] px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-bold">MISSING</span>
+              )}
             </div>
           </div>
+
           <div className="space-y-3">
             <button 
-              onClick={() => setUser({ id: 'guest-preview', name: 'Guest Chef', email: 'guest@example.com' })}
-              className="w-full bg-[#4A5D23] text-white font-medium py-3 rounded-xl hover:bg-[#3A4A1C] transition-all shadow-lg shadow-[#4A5D23]/20"
+              onClick={() => setShowConfigForce(true)}
+              className="w-full bg-[#4A5D23] text-white font-medium py-3 rounded-xl hover:bg-[#3A4A1C] transition-all"
             >
-              Continue as Guest (Limited)
+              I've added them, take me to Login
             </button>
-            <p className="text-xs text-gray-400 font-sans">
-              Note: Key features like AI recipe generation and cloud saving will be disabled until configured.
+            <button 
+              onClick={() => setUser({ id: 'guest-preview', name: 'Guest Chef', email: 'guest@example.com' })}
+              className="w-full bg-white border-2 border-gray-100 text-gray-600 font-medium py-3 rounded-xl hover:bg-gray-50 transition-all"
+            >
+              Continue as Guest (Read Only)
+            </button>
+          </div>
+          
+          <div className="mt-8 pt-6 border-t border-gray-100">
+             <p className="text-[10px] text-gray-400 font-sans leading-relaxed">
+              <strong>Need help?</strong> Get your Gemini Key at <a href="https://aistudio.google.com/app/apikey" target="_blank" className="underline text-blue-400">Google AI Studio</a>. 
+              Find your Supabase credentials in Project Settings &gt; API.
             </p>
           </div>
         </div>
