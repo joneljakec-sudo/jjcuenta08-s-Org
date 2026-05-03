@@ -672,9 +672,12 @@ export default function App() {
           </div>
           <h1 className="text-2xl font-serif font-bold text-gray-900 mb-4">Final Configuration Needed</h1>
           <p className="text-gray-600 mb-6 text-sm leading-relaxed">
-            Savoria needs these variables in your <strong>Vercel Project Settings</strong>. 
-            Frontend variables <strong>must</strong> start with <code className="bg-gray-100 px-1 rounded">VITE_</code>.
+            Savoria needs these variables in your <strong>Vercel Project Settings</strong> (Settings &gt; Environment Variables). 
           </p>
+          
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 text-sm text-amber-800 text-left">
+            <strong>Critical:</strong> After adding variables starting with <code>VITE_</code>, you <strong>MUST trigger a new Deployment</strong> for them to take effect.
+          </div>
 
           <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left font-mono text-xs space-y-3">
             <div className="flex justify-between items-center pb-1 border-b border-gray-200">

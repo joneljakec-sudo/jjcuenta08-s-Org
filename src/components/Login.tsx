@@ -79,10 +79,20 @@ export default function Login({ onLogin }: LoginProps) {
     } catch (err: any) {
       console.error('Auth error:', err);
       let msg = err.message;
-      if (msg.includes('invalid url path') || msg.includes('Failed to fetch')) {
-        msg = 'Connection error. Please check if VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are correctly set in Settings > Secrets and restart the dev server.';
+      if (msg.includes('invalid url path') || msg.includes('Failed to fetch') || msg.includes('not configured')) {
+        msg = (
+          <div className="space-y-2">
+            <p className="font-bold">Database Connection Error</p>
+            <p className="opacity-90">Savoria couldn't connect to your database. Please check your environment variables in Vercel:</p>
+            <ul className="list-disc ml-4 space-y-1">
+              <li>VITE_SUPABASE_URL</li>
+              <li>VITE_SUPABASE_ANON_KEY</li>
+            </ul>
+            <p className="pt-2 text-[10px] italic">Ensure they start with VITE_ and that you have redeployed your project after adding them.</p>
+          </div>
+        );
       }
-      if (msg.toLowerCase().includes('email not confirmed')) {
+      if (typeof msg === 'string' && msg.toLowerCase().includes('email not confirmed')) {
         setError(
           <div className="flex flex-col gap-3">
             <span className="text-red-600 font-bold">Email Not Confirmed</span>
@@ -234,9 +244,16 @@ export default function Login({ onLogin }: LoginProps) {
                 </div>
               )}
 
+              {!isSupabaseConfigured && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-700 text-xs leading-relaxed mb-4">
+                  <p className="font-bold mb-1">Database not detected</p>
+                  <p>You need to add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your env variables in Vercel and <strong>redeploy</strong> your project.</p>
+                </div>
+              )}
+
               <button 
                 type="submit"
-                disabled={loading}
+                disabled={loading || !isSupabaseConfigured}
                 className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl bg-brand-olive text-white text-base font-bold shadow-lg shadow-brand-olive/20 hover:bg-brand-olive/90 transition-all disabled:opacity-50"
               >
                 {loading ? <Loader2 className="animate-spin" size={20} /> : (
