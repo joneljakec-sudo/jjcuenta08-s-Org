@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NewsfeedItem, UserProfileData, PostComment } from '../types';
-import { Utensils, Heart, ChefHat, Clock, Trash2, MessageSquare, Share2, Send, Image as ImageIcon, Smile, MapPin, MoreHorizontal, Loader2, ThumbsUp } from 'lucide-react';
+import { Utensils, Heart, ChefHat, Clock, Trash2, MessageSquare, Share2, Send, Image as ImageIcon, Smile, MapPin, MoreHorizontal, Loader2, ThumbsUp, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { FeedItemSkeleton } from './ui/Skeleton';
 import Swipeable from './ui/Swipeable';
@@ -15,6 +15,7 @@ interface NewsfeedProps {
   onDeletePost?: (id: string) => void;
   onLikePost?: (id: string) => void;
   onCommentPost?: (id: string, content: string) => void;
+  onRefresh?: () => void;
   loading?: boolean;
 }
 
@@ -27,6 +28,7 @@ export default function Newsfeed({
   onDeletePost, 
   onLikePost,
   onCommentPost,
+  onRefresh,
   loading 
 }: NewsfeedProps) {
   const [newPostContent, setNewPostContent] = useState('');
@@ -115,6 +117,19 @@ export default function Newsfeed({
 
   return (
     <div className="max-w-xl mx-auto space-y-3 pb-20">
+      {/* Refresh Indicator if onRefresh exists */}
+      {onRefresh && (
+        <div className="flex justify-end p-2 px-3 md:px-0">
+          <button 
+            onClick={onRefresh}
+            className="flex items-center gap-1.5 text-xs font-bold text-brand-ink-subtle hover:text-brand-olive transition-colors group"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
+            <span>Check for new posts</span>
+          </button>
+        </div>
+      )}
+
       {/* Facebook Lite Style Creator */}
       <div className="bg-white dark:bg-brand-card shadow-sm border-b border-black/5 dark:border-white/5 p-3">
         <div className="flex gap-3">

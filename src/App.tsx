@@ -6,6 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { UserPreferences, Recipe, Review, Notification, NewsfeedItem, AppError } from './types';
+
+declare global {
+  interface Window {
+    refreshNewsfeed: () => Promise<void>;
+  }
+}
 import Onboarding from './components/Onboarding';
 import RecipeCard from './components/RecipeCard';
 import RecipeDetail from './components/RecipeDetail';
@@ -49,9 +55,13 @@ export default function App() {
   const [newsfeedItems, setNewsfeedItems] = useState<NewsfeedItem[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [appError, setAppError] = useState<AppError | null>(null);
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isOnline, setIsOnline] = useState(true); // Default to true to be optimistic
 
   useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      setIsOnline(navigator.onLine);
+    }
+    
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -156,11 +166,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || user.id.startsWith('guest-')) return;
+    if (!user) return;
     if (!supabase) return;
 
     // Fetch initial notifications
     const fetchNotifications = async () => {
+      if (user.id.startsWith('guest-')) return;
       try {
         const { data } = await supabase
           .from('notifications')
@@ -178,11 +189,13 @@ export default function App() {
     const fetchNewsfeed = async () => {
       setNewsfeedLoading(true);
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('newsfeed')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(30);
+          .limit(50);
+        
+        if (error) throw error;
         if (data) setNewsfeedItems(data);
       } catch (err) {
         console.error("Failed to fetch newsfeed:", err);
@@ -191,13 +204,15 @@ export default function App() {
       }
     };
 
+    window.refreshNewsfeed = fetchNewsfeed;
+
     fetchNotifications();
     fetchNewsfeed();
 
     // Real-time subscriptions
     const notifChannel = supabase
       .channel('notifications-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload: any) => {
         if (payload.eventType === 'INSERT') {
           setNotifications(prev => [payload.new as Notification, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
@@ -210,8 +225,22 @@ export default function App() {
 
     const newsChannel = supabase
       .channel('newsfeed-changes')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'newsfeed' }, (payload) => {
-        setNewsfeedItems(prev => [payload.new as NewsfeedItem, ...prev]);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'newsfeed' }, (payload: any) => {
+        if (payload.eventType === 'INSERT') {
+          // Check if it's already in the list (optimistic UI)
+          setNewsfeedItems(prev => {
+            const exists = prev.some(item => item.id === payload.new.id || (item.id.startsWith('temp-') && item.content === payload.new.content));
+            if (exists && payload.new.id.startsWith('temp-')) return prev;
+            
+            // If we have a temp post with same content, replace it
+            const filtered = prev.filter(item => !(item.id.startsWith('temp-') && item.content === payload.new.content));
+            return [payload.new as NewsfeedItem, ...filtered];
+          });
+        } else if (payload.eventType === 'UPDATE') {
+          setNewsfeedItems(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+        } else if (payload.eventType === 'DELETE') {
+          setNewsfeedItems(prev => prev.filter(p => p.id === payload.old.id));
+        }
       })
       .subscribe();
 
@@ -275,23 +304,40 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from('newsfeed').insert({
-      user_id: user.id,
-      user_name: user.name,
-      user_avatar_color: user.avatarColor,
-      user_avatar_url: user.avatarUrl,
-      type: 'post',
-      content,
-      recipe_image: image,
-      likes_count: 0,
-      comments_count: 0
-    });
+    try {
+      const { data, error } = await supabase.from('newsfeed').insert({
+        user_id: user.id,
+        user_name: user.name,
+        user_avatar_color: user.avatarColor,
+        user_avatar_url: user.avatarUrl,
+        type: 'post',
+        content,
+        recipe_image: image,
+        likes_count: 0,
+        comments_count: 0
+      }).select().single();
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+      
+      // Update the temp post with the real ID from DB
+      if (data) {
+        setNewsfeedItems(prev => prev.map(p => p.id === newPost.id ? data : p));
+      }
+    } catch (error: any) {
       console.error('Error adding newsfeed post:', error);
       // Rollback on error
       setNewsfeedItems(prev => prev.filter(p => p.id !== newPost.id));
-      addNotification('Post Failed', 'Could not share your post. Please try again.', 'system');
+      
+      let errorMsg = 'Could not share your post.';
+      if (error.message?.includes('insufficient permissions') || error.code === '42501') {
+        errorMsg = 'Permission denied. Please check if your account is fully verified or if Supabase RLS is configured.';
+      } else if (error.message?.includes('fetch') || error.message?.includes('network')) {
+        errorMsg = 'Connection error. Please check your internet and try again.';
+      }
+      
+      addNotification('Post Failed', errorMsg, 'system');
     }
   };
 
@@ -308,17 +354,20 @@ export default function App() {
     setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: !hasLiked, likes_count: newLikes } : p));
 
     try {
+      // NOTE: In a properly secured Supabase app, you wouldn't update the post directly
+      // because RLS usually blocks updates from non-owners. 
+      // We'll try to update, but if it fails, we keep the local state updated for UX.
       const { error } = await supabase
         .from('newsfeed')
         .update({ likes_count: newLikes })
         .eq('id', postId);
         
-      if (error) throw error;
+      if (error) {
+        console.warn('Backend like update failed (likely RLS). Keeping local like for session.', error);
+      }
     } catch (err) {
       console.error('Error toggling like:', err);
-      // Rollback on error
-      setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: hasLiked, likes_count: currentLikes } : p));
-      addNotification('Network Error', 'Failed to update like status.', 'system');
+      // We don't rollback here to avoid flickering if it's just an RLS issue on counts
     }
   };
 
@@ -357,13 +406,19 @@ export default function App() {
       if (error) throw error;
 
       // Update the post's comment count in database
+      // Similar to likes, this might fail due to RLS if we don't own the post.
+      // We use a separate select to be safe.
       const { data: post } = await supabase.from('newsfeed').select('comments_count').eq('id', postId).single();
-      await supabase.from('newsfeed').update({ 
-        comments_count: (post?.comments_count || 0) + 1 
-      }).eq('id', postId);
+      if (post) {
+        const { error: updateError } = await supabase.from('newsfeed').update({ 
+          comments_count: (post.comments_count || 0) + 1 
+        }).eq('id', postId);
+        if (updateError) console.warn('Could not update comment count on post (RLS restriction).', updateError);
+      }
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error posting comment:', err);
+      addNotification('Comment Failed', err.message || 'Could not post comment.', 'system');
     }
   };
 
@@ -1345,6 +1400,21 @@ export default function App() {
                 onDeletePost={deleteNewsfeedItem}
                 onLikePost={togglePostLike}
                 onCommentPost={addPostComment}
+                onRefresh={async () => {
+                  setNewsfeedLoading(true);
+                  try {
+                    const { data } = await supabase
+                      .from('newsfeed')
+                      .select('*')
+                      .order('created_at', { ascending: false })
+                      .limit(50);
+                    if (data) setNewsfeedItems(data);
+                  } catch (err) {
+                    console.error("Manual refresh failed:", err);
+                  } finally {
+                    setNewsfeedLoading(false);
+                  }
+                }}
               />
             </motion.div>
           )}
