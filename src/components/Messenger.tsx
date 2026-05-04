@@ -195,6 +195,7 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
         conversation_id: activeConversation.id,
         sender_id: currentUser.id,
         content: messageContent,
+        media_type: 'text',
         read: false
       });
 

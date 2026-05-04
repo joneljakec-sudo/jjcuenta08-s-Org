@@ -485,7 +485,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error toggling like:', err);
-      // Rollback on hard error if needed, but triggers handle counts
+      // No rollback needed for optimism as counts are trigger-based
     }
   };
 
