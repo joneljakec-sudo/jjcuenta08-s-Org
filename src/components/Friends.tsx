@@ -33,6 +33,30 @@ export default function Friends({ currentUser, onUserClick, onMessageClick }: Fr
     }
   }, [currentUser.id]);
 
+  useEffect(() => {
+    if (currentUser.id.startsWith('guest-')) return;
+
+    const friendshipChannel = supabase
+      .channel('friends:updates')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'friendships',
+        filter: `sender_id=eq.${currentUser.id}`
+      }, () => fetchFriendships())
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'friendships',
+        filter: `receiver_id=eq.${currentUser.id}`
+      }, () => fetchFriendships())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(friendshipChannel);
+    };
+  }, [currentUser.id]);
+
   const fetchFriendships = async () => {
     setLoading(true);
     setError(null);

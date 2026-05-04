@@ -56,6 +56,7 @@ export default function App() {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [appError, setAppError] = useState<AppError | null>(null);
   const [isOnline, setIsOnline] = useState(true); // Default to true to be optimistic
+  const [supabaseStatus, setSupabaseStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
 
   useEffect(() => {
     if (typeof navigator !== 'undefined') {
@@ -68,11 +69,69 @@ export default function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    // Initial check for Supabase
+    const checkSupabase = async () => {
+      try {
+        if (!supabase) {
+          setSupabaseStatus('error');
+          return;
+        }
+        const { error } = await supabase.from('newsfeed').select('id').limit(1);
+        if (error) {
+          console.warn('Supabase initial check returned error:', error);
+          if (error.code === '42501') { // Permission denied - still connected, just RLS
+            setSupabaseStatus('connected');
+          } else {
+            setSupabaseStatus('error');
+          }
+        } else {
+          setSupabaseStatus('connected');
+        }
+      } catch (err) {
+        setSupabaseStatus('error');
+      }
+    };
+    
+    checkSupabase();
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  const ServerStatusIndicator = () => (
+    <div className="fixed bottom-24 left-4 z-50 flex flex-col gap-2 pointer-events-none">
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="flex items-center gap-2 bg-red-500 text-white px-3 py-1.5 rounded-full text-[10px] font-bold shadow-lg"
+          >
+            <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            NO INTERNET CONNECTION
+          </motion.div>
+        )}
+        {isOnline && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-lg ${
+              supabaseStatus === 'connected' ? 'bg-green-500 text-white' : 
+              supabaseStatus === 'connecting' ? 'bg-amber-500 text-white' : 'bg-red-500 text-white'
+            }`}
+          >
+            <div className={`w-2 h-2 rounded-full bg-white ${supabaseStatus === 'connecting' ? 'animate-pulse' : ''}`} />
+            {supabaseStatus === 'connected' ? 'SERVER ONLINE' : 
+             supabaseStatus === 'connecting' ? 'CONNECTING TO SERVER...' : 'SERVER CONNECTION ERROR'}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 
   useEffect(() => {
     if (!isOnline) {
@@ -244,10 +303,44 @@ export default function App() {
       })
       .subscribe();
 
+    const msgChannel = supabase
+      .channel('global-messages')
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'messages'
+      }, async (payload: any) => {
+        // Find if this message belongs to the user and they aren't the sender
+        if (payload.new.sender_id === user.id) return;
+        
+        const { data: conv } = await supabase.from('conversations').select('participant_ids').eq('id', payload.new.conversation_id).single();
+        if (conv?.participant_ids?.includes(user.id)) {
+          addNotification('New Message', payload.new.content || 'Sent a media file', 'system');
+        }
+      })
+      .subscribe();
+
+    const friendChannel = supabase
+      .channel('global-friends')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'friendships'
+      }, (payload: any) => {
+        if (payload.eventType === 'INSERT' && payload.new.receiver_id === user.id) {
+          addNotification('Friend Request', 'Someone sent you a friend request!', 'system');
+        } else if (payload.eventType === 'UPDATE' && payload.new.status === 'accepted' && (payload.new.sender_id === user.id || payload.new.receiver_id === user.id)) {
+          addNotification('New Friend', 'Your friend request was accepted!', 'system');
+        }
+      })
+      .subscribe();
+
     return () => {
       if (supabase) {
         supabase.removeChannel(notifChannel);
         supabase.removeChannel(newsChannel);
+        supabase.removeChannel(msgChannel);
+        supabase.removeChannel(friendChannel);
       }
     };
   }, [user]);
@@ -1070,6 +1163,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-brand-cream pb-20">
+      <ServerStatusIndicator />
       {/* FB Lite style layout but with Savoria branding */}
       <header className="bg-white dark:bg-brand-card border-b border-black/5 sticky top-0 z-40 transition-colors">
         <div className="max-w-xl mx-auto flex items-center justify-between px-4 h-14">

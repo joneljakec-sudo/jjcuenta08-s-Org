@@ -32,6 +32,25 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
   useEffect(() => {
     fetchConversations();
     
+    // Subscribe to conversations list changes
+    const convSubscription = supabase
+      .channel('messenger:conversations')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'conversations',
+        filter: `participant_ids=cs.{${currentUser.id}}`
+      }, (payload: any) => {
+        if (payload.eventType === 'INSERT') {
+          setConversations(prev => [payload.new as Conversation, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setConversations(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c).sort((a, b) => 
+            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          ));
+        }
+      })
+      .subscribe();
+
     // Subscribe to messages in active conversation
     let subscription: any;
     if (activeConversation) {
@@ -50,6 +69,7 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
     }
 
     return () => {
+      supabase.removeChannel(convSubscription);
       if (subscription) supabase.removeChannel(subscription);
     };
   }, [activeConversation]);
