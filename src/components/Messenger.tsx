@@ -38,15 +38,17 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
-        table: 'conversations',
-        filter: `participant_ids=cs.{${currentUser.id}}`
+        table: 'conversations'
       }, (payload: any) => {
-        if (payload.eventType === 'INSERT') {
-          setConversations(prev => [payload.new as Conversation, ...prev]);
-        } else if (payload.eventType === 'UPDATE') {
-          setConversations(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c).sort((a, b) => 
-            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          ));
+        // Filter in JS since array filters aren't supported in Realtime yet
+        if (payload.new && payload.new.participant_ids?.includes(currentUser.id)) {
+          if (payload.eventType === 'INSERT') {
+            setConversations(prev => [payload.new as Conversation, ...prev]);
+          } else if (payload.eventType === 'UPDATE') {
+            setConversations(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c).sort((a, b) => 
+              new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+            ));
+          }
         }
       })
       .subscribe();
@@ -78,8 +80,6 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
     setLoading(true);
     setError(null);
     try {
-      // In a real app, this would be a join or a specific RPC
-      // For now, let's mock some conversations if none exist or if it's a guest
       if (currentUser.id.startsWith('guest-')) {
         setConversations([
           {
@@ -103,10 +103,7 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
 
       const { data, error: fetchErr } = await supabase
         .from('conversations')
-        .select(`
-          *,
-          participants:participant_ids
-        `)
+        .select('*')
         .contains('participant_ids', [currentUser.id])
         .order('updated_at', { ascending: false });
 
@@ -120,7 +117,26 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
         }
         return;
       }
-      setConversations(data || []);
+
+      if (data && data.length > 0) {
+        // Fetch all profiles for all participants in all conversations
+        const allParticipantIds = Array.from(new Set(data.flatMap((c: any) => c.participant_ids)));
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, name, avatar_url, avatar_color')
+          .in('id', allParticipantIds);
+        
+        const conversationsWithParticipants = data.map((conv: any) => ({
+          ...conv,
+          participants: conv.participant_ids.map((pId: string) => 
+            profiles?.find((p: any) => p.id === pId) || { id: pId, name: 'User', avatarColor: '#1877F2' }
+          )
+        }));
+        
+        setConversations(conversationsWithParticipants);
+      } else {
+        setConversations([]);
+      }
     } catch (err) {
       console.error('Error fetching conversations:', err);
       setError('An unexpected error occurred in Messenger.');

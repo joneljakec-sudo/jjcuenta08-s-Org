@@ -426,6 +426,8 @@ export default function App() {
       let errorMsg = 'Could not share your post.';
       if (error.message?.includes('insufficient permissions') || error.code === '42501') {
         errorMsg = 'Permission denied. Please check if your account is fully verified or if Supabase RLS is configured.';
+      } else if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
+        errorMsg = 'Newsfeed database table is missing. Please run the setup SQL in your Supabase dashboard.';
       } else if (error.message?.includes('fetch') || error.message?.includes('network')) {
         errorMsg = 'Connection error. Please check your internet and try again.';
       }
