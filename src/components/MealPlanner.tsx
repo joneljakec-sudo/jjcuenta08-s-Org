@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Recipe, MealPlan } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Utensils, Clock, Trash2, CheckCircle2, Package, Archive, Repeat } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Utensils, Clock, Trash2, CheckCircle2, Package, Archive, Repeat, ChefHat } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { generateRecipes } from '../services/geminiService';
+import { Skeleton } from './ui/Skeleton';
 
 interface MealPlannerProps {
   userRecipes: Recipe[];
@@ -16,6 +17,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
   const [currentDate, setCurrentDate] = useState(new Date());
   const [mealPlans, setMealPlans] = useState<MealPlan[]>([]);
   const [isAddingMeal, setIsAddingMeal] = useState<{ date: string; type: MealPlan['meal_type'] } | null>(null);
+  const [isEditingMeal, setIsEditingMeal] = useState<MealPlan | null>(null);
   const [quickMealTitle, setQuickMealTitle] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -43,9 +45,35 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
   };
 
   const addMeal = async (recipe: Recipe) => {
-    if (!isAddingMeal) return;
+    if (!isAddingMeal && !isEditingMeal) return;
 
     try {
+      if (isEditingMeal) {
+        const { data, error } = await supabase
+          .from('meal_plans')
+          .update({
+            recipe_id: recipe.id,
+            recipe_title: recipe.title,
+            recipe_image: recipe.image
+          })
+          .eq('id', isEditingMeal.id)
+          .select()
+          .single();
+
+        if (error) {
+          setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? {
+            ...p,
+            recipe_id: recipe.id,
+            recipe_title: recipe.title,
+            recipe_image: recipe.image
+          } : p));
+        } else {
+          setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? data : p));
+        }
+        setIsEditingMeal(null);
+        return;
+      }
+
       const newPlan: Omit<MealPlan, 'id'> = {
         user_id: userId,
         recipe_id: recipe.id,
@@ -77,9 +105,34 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
   };
 
   const addQuickMeal = async () => {
-    if (!isAddingMeal || !quickMealTitle.trim()) return;
+    if ((!isAddingMeal && !isEditingMeal) || !quickMealTitle.trim()) return;
 
     try {
+      if (isEditingMeal) {
+        const { data, error } = await supabase
+          .from('meal_plans')
+          .update({
+            recipe_title: quickMealTitle.trim(),
+            recipe_image: 'https://images.unsplash.com/photo-1490818387583-1baba5e638af?auto=format&fit=crop&q=80&w=400'
+          })
+          .eq('id', isEditingMeal.id)
+          .select()
+          .single();
+
+        if (error) {
+          setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? {
+            ...p,
+            recipe_title: quickMealTitle.trim(),
+            recipe_image: 'https://images.unsplash.com/photo-1490818387583-1baba5e638af?auto=format&fit=crop&q=80&w=400'
+          } : p));
+        } else {
+          setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? data : p));
+        }
+        setIsEditingMeal(null);
+        setQuickMealTitle('');
+        return;
+      }
+
       const newPlan: Omit<MealPlan, 'id'> = {
         user_id: userId,
         recipe_id: `quick-${Math.random().toString(36).substr(2, 5)}`,
@@ -168,6 +221,48 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
     }
   };
 
+  const changeMealType = async (type: MealPlan['meal_type']) => {
+    if (!isEditingMeal) return;
+    try {
+      const { data, error } = await supabase
+        .from('meal_plans')
+        .update({ meal_type: type })
+        .eq('id', isEditingMeal.id)
+        .select()
+        .single();
+      
+      if (error) {
+        setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? { ...p, meal_type: type } : p));
+      } else {
+        setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? data : p));
+      }
+      setIsEditingMeal(prev => prev ? { ...prev, meal_type: type } : null);
+    } catch (err) {
+      console.error('Error changing meal type:', err);
+    }
+  };
+
+  const changeMealDate = async (date: string) => {
+    if (!isEditingMeal) return;
+    try {
+      const { data, error } = await supabase
+        .from('meal_plans')
+        .update({ date })
+        .eq('id', isEditingMeal.id)
+        .select()
+        .single();
+      
+      if (error) {
+        setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? { ...p, date } : p));
+      } else {
+        setMealPlans(prev => prev.map(p => p.id === isEditingMeal.id ? data : p));
+      }
+      setIsEditingMeal(prev => prev ? { ...prev, date } : null);
+    } catch (err) {
+      console.error('Error changing meal date:', err);
+    }
+  };
+
   const toggleMealPrep = async (meal: MealPlan) => {
     try {
       await supabase
@@ -199,9 +294,81 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
     return mealPlans.filter(p => p.date === dateString && p.meal_type === type);
   };
 
-  const availableRecipes = Array.from(new Map([...userRecipes, ...favorites].map(r => [r.id, r])).values());
+  const [pickerTab, setPickerTab] = useState<'my-recipes' | 'favorites'>('my-recipes');
+  const [aiGenerating, setAiGenerating] = useState(false);
+
+  const suggestAiMeal = async (type: MealPlan['meal_type'], date: string) => {
+    try {
+      setAiGenerating(true);
+      const { data: profile } = await supabase.from('profiles').select('preferences').eq('id', userId).single();
+      const userPrefs = profile?.preferences || { diet: 'Moderate' as any, budget: 'Moderate' as any, allergies: [], cuisines: [] };
+      
+      const suggested = await generateRecipes({ 
+        ...userPrefs, 
+        mealType: type as any 
+      });
+      
+      if (suggested && suggested.length > 0) {
+        const recipe = suggested[0];
+        const newPlan: Omit<MealPlan, 'id'> = {
+          user_id: userId,
+          recipe_id: recipe.id,
+          recipe_title: recipe.title,
+          recipe_image: recipe.image,
+          date,
+          meal_type: type
+        };
+
+        const { data, error } = await supabase
+          .from('meal_plans')
+          .insert(newPlan)
+          .select()
+          .single();
+
+        if (error) {
+          setMealPlans(prev => [...prev, { ...newPlan, id: Math.random().toString(36).substr(2, 9) } as MealPlan]);
+        } else {
+          setMealPlans(prev => [...prev, data]);
+        }
+        setIsAddingMeal(null);
+      }
+    } catch (err) {
+      console.error('Error suggesting AI meal:', err);
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const availableRecipes = pickerTab === 'my-recipes' ? userRecipes : favorites;
 
   const preppedMeals = mealPlans.filter(p => p.is_meal_prep);
+
+  if (loading && mealPlans.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+          <div className="space-y-4">
+            <Skeleton variant="text" className="w-64 h-12" />
+            <Skeleton variant="text" className="w-48 h-6" />
+          </div>
+          <Skeleton variant="rectangular" className="w-64 h-16 rounded-2xl" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
+          {[...Array(7)].map((_, i) => (
+            <div key={i} className="space-y-4">
+              <Skeleton variant="rectangular" className="w-full h-24 rounded-3xl" />
+              {[...Array(3)].map((_, j) => (
+                <div key={j} className="space-y-2">
+                  <Skeleton variant="text" className="w-12 h-3" />
+                  <Skeleton variant="rectangular" className="w-full h-20 rounded-2xl" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-12">
@@ -211,39 +378,48 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
           <p className="text-brand-ink-muted text-lg">Schedule your weekly nourishment.</p>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex flex-col md:flex-row md:items-center gap-4">
           {preppedMeals.length > 0 && (
             <div className="flex items-center gap-2 px-4 py-2 bg-brand-olive/5 rounded-2xl border border-brand-olive/10">
               <Package size={18} className="text-brand-olive" />
-              <span className="text-sm font-bold text-brand-olive">{preppedMeals.length} Prepped</span>
+              <span className="text-xs font-bold text-brand-olive uppercase tracking-widest">{preppedMeals.length} Prepped</span>
             </div>
           )}
-
-          <div className="flex items-center gap-4 bg-white dark:bg-brand-ink/10 p-2 rounded-2xl border border-black/5 dark:border-white/10">
-          <button 
-            onClick={() => {
-              const d = new Date(currentDate);
-              d.setDate(d.getDate() - 7);
-              setCurrentDate(d);
-            }}
-            className="p-2 hover:bg-brand-olive/10 rounded-xl transition-all"
-          >
-            <ChevronLeft size={24} />
-          </button>
-          <div className="flex items-center gap-3 px-4 font-bold text-lg min-w-[240px] justify-center">
-            <CalendarIcon size={20} className="text-brand-olive" />
-            {weekDays[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDays[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-          </div>
-          <button 
-            onClick={() => {
-              const d = new Date(currentDate);
-              d.setDate(d.getDate() + 7);
-              setCurrentDate(d);
-            }}
-            className="p-2 hover:bg-brand-olive/10 rounded-xl transition-all"
-          >
-            <ChevronRight size={24} />
-          </button>
+          
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setCurrentDate(new Date())}
+              className="px-4 py-2 bg-white dark:bg-brand-ink/10 border border-black/5 dark:border-white/5 rounded-2xl text-xs font-bold uppercase tracking-widest text-brand-ink-subtle hover:text-brand-ink hover:bg-brand-olive/5 transition-all"
+            >
+              Today
+            </button>
+            
+            <div className="flex items-center gap-2 bg-white dark:bg-brand-ink/10 p-1.5 rounded-2xl border border-black/5 dark:border-white/5">
+              <button 
+                onClick={() => {
+                  const d = new Date(currentDate);
+                  d.setDate(d.getDate() - 7);
+                  setCurrentDate(d);
+                }}
+                className="p-2 hover:bg-brand-olive/10 rounded-xl transition-all text-brand-ink-subtle hover:text-brand-olive"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2 px-4 font-bold text-sm min-w-[200px] justify-center text-brand-ink-muted">
+                <CalendarIcon size={16} className="text-brand-olive" />
+                {weekDays[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDays[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </div>
+              <button 
+                onClick={() => {
+                  const d = new Date(currentDate);
+                  d.setDate(d.getDate() + 7);
+                  setCurrentDate(d);
+                }}
+                className="p-2 hover:bg-brand-olive/10 rounded-xl transition-all text-brand-ink-subtle hover:text-brand-olive"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -283,8 +459,8 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                           >
                             <div 
                               onClick={() => {
-                                const recipe = availableRecipes.find(r => r.id === meal.recipe_id);
-                                if (recipe) onRecipeClick(recipe);
+                                setIsEditingMeal(meal);
+                                setQuickMealTitle(meal.recipe_title);
                               }}
                               className={`bg-white dark:bg-brand-card p-3 rounded-2xl shadow-sm border transition-all cursor-pointer ${
                                 meal.is_meal_prep 
@@ -293,7 +469,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                               } group-hover/meal:border-brand-olive/30`}
                             >
                               <div className="aspect-video rounded-xl overflow-hidden mb-3 relative">
-                                <img src={meal.recipe_image} alt={meal.recipe_title} className="w-full h-full object-cover" />
+                                <img src={meal.recipe_image} alt={meal.recipe_title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                                 {meal.is_meal_prep && (
                                   <div className="absolute top-2 left-2 px-2 py-1 bg-brand-olive text-white text-[8px] font-bold uppercase tracking-widest rounded-lg flex items-center gap-1 shadow-lg">
                                     <CheckCircle2 size={8} /> Prepped
@@ -384,7 +560,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                 className="bg-white dark:bg-brand-card p-4 rounded-[32px] border border-black/5 dark:border-white/5 hover:border-brand-olive/30 transition-all cursor-pointer group hover:shadow-xl"
               >
                 <div className="aspect-square rounded-2xl overflow-hidden mb-4 relative">
-                  <img src={meal.recipe_image} alt={meal.recipe_title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                  <img src={meal.recipe_image} alt={meal.recipe_title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
                   <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <Utensils className="text-white" size={24} />
                   </div>
@@ -405,7 +581,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
       )}
 
       <AnimatePresence>
-        {isAddingMeal && (
+        {(isAddingMeal || isEditingMeal) && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -419,17 +595,53 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
             >
               <div className="p-8 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
                 <div>
-                  <h3 className="text-3xl font-serif">Add to {isAddingMeal.type}</h3>
-                  <p className="text-brand-ink-subtle italic">Pick a recipe from your kitchen</p>
+                  <h3 className="text-3xl font-serif">
+                    {isEditingMeal ? 'Edit' : 'Add to'} {isEditingMeal ? isEditingMeal.meal_type : isAddingMeal?.type}
+                  </h3>
+                  <p className="text-brand-ink-subtle italic">
+                    {isEditingMeal ? 'Modify your meal plan' : 'Pick a recipe from your kitchen'}
+                  </p>
                 </div>
-                <button onClick={() => setIsAddingMeal(null)} className="p-3 hover:bg-black/5 rounded-full transition-all">
+                <button onClick={() => {
+                  setIsAddingMeal(null);
+                  setIsEditingMeal(null);
+                  setQuickMealTitle('');
+                }} className="p-3 hover:bg-black/5 rounded-full transition-all">
                   <X size={24} />
                 </button>
               </div>
 
               <div className="p-8 overflow-y-auto">
+                {isEditingMeal && (
+                  <div className="grid grid-cols-2 gap-4 mb-8">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Meal Type</label>
+                      <select 
+                        value={isEditingMeal.meal_type}
+                        onChange={(e) => changeMealType(e.target.value as MealPlan['meal_type'])}
+                        className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none"
+                      >
+                        {mealTypes.map(type => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-2">Date</label>
+                      <input 
+                        type="date"
+                        value={isEditingMeal.date}
+                        onChange={(e) => changeMealDate(e.target.value)}
+                        className="w-full p-4 bg-white dark:bg-brand-ink/20 border-2 border-black/5 dark:border-white/5 rounded-2xl outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div className="mb-8 p-6 bg-white dark:bg-brand-ink/10 rounded-3xl border-2 border-brand-olive/20 shadow-inner">
-                  <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-3">Quick Add Meal</label>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-brand-ink-subtle mb-3">
+                    {isEditingMeal ? 'Change Meal Title' : 'Quick Add Meal'}
+                  </label>
                   <div className="flex gap-3">
                     <input 
                       autoFocus
@@ -448,16 +660,69 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                       disabled={!quickMealTitle.trim()}
                       className="bg-brand-olive text-white p-4 rounded-2xl disabled:opacity-50 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-olive/20"
                     >
-                      <Plus size={24} />
+                      {isEditingMeal ? <CheckCircle2 size={24} /> : <Plus size={24} />}
                     </button>
                   </div>
                 </div>
 
+                <div className="flex gap-4 mb-8">
+                  <div className="flex-1 p-1 bg-black/5 dark:bg-white/5 rounded-2xl flex gap-1">
+                    <button 
+                      onClick={() => setPickerTab('my-recipes')}
+                      className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'my-recipes' ? 'bg-white dark:bg-brand-card shadow-sm text-brand-ink' : 'text-brand-ink-subtle hover:text-brand-ink'}`}
+                    >
+                      My Kitchen
+                    </button>
+                    <button 
+                      onClick={() => setPickerTab('favorites')}
+                      className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'favorites' ? 'bg-white dark:bg-brand-card shadow-sm text-brand-ink' : 'text-brand-ink-subtle hover:text-brand-ink'}`}
+                    >
+                      Favorites
+                    </button>
+                  </div>
+                  {!isEditingMeal && isAddingMeal && (
+                    <button 
+                      onClick={() => suggestAiMeal(isAddingMeal.type, isAddingMeal.date)}
+                      disabled={aiGenerating}
+                      className="flex-1 py-3 px-4 bg-brand-olive text-white rounded-2xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-brand-olive/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 "
+                    >
+                      {aiGenerating ? (
+                        <>
+                          <Repeat size={14} className="animate-spin" />
+                          Curating...
+                        </>
+                      ) : (
+                        <>
+                          <ChefHat size={14} />
+                          AI Suggest
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-4 mb-6">
                   <div className="flex-1 h-px bg-black/5 dark:bg-white/5" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-brand-ink-subtle">Or choose from your kitchen</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-brand-ink-subtle">
+                    {isEditingMeal ? 'Or swap for a recipe' : `Choose from ${pickerTab === 'my-recipes' ? 'your kitchen' : 'favorites'}`}
+                  </span>
                   <div className="flex-1 h-px bg-black/5 dark:bg-white/5" />
                 </div>
+
+                {isEditingMeal && (
+                  <div className="mb-8">
+                    <button
+                      onClick={() => {
+                        const recipe = availableRecipes.find(r => r.id === isEditingMeal.recipe_id);
+                        if (recipe) onRecipeClick(recipe);
+                        setIsEditingMeal(null);
+                      }}
+                      className="w-full p-4 bg-brand-olive/10 text-brand-olive rounded-2xl font-bold hover:bg-brand-olive/20 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Utensils size={18} /> View Recipe Details
+                    </button>
+                  </div>
+                )}
 
                 {availableRecipes.length === 0 ? (
                   <div className="text-center py-12">
@@ -473,7 +738,7 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
                         className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-brand-ink/10 border border-black/5 dark:border-white/5 hover:border-brand-olive/30 hover:shadow-lg transition-all text-left group"
                       >
                         <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0">
-                          <img src={recipe.image} alt={recipe.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                          <img src={recipe.image} alt={recipe.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
                         </div>
                         <div>
                           <h4 className="font-bold text-brand-ink mb-1 line-clamp-1">{recipe.title}</h4>

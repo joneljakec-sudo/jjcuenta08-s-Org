@@ -37,6 +37,8 @@ export interface Recipe {
   };
   tags: string[];
   videoUrl?: string;
+  rating?: number;
+  ratingCount?: number;
 }
 
 export interface Review {
@@ -67,10 +69,25 @@ export interface NewsfeedItem {
   user_id: string;
   user_name: string;
   user_avatar_color?: string;
-  type: 'cooked' | 'shared' | 'favorite';
-  recipe_id: string;
-  recipe_title: string;
-  recipe_image: string;
+  user_avatar_url?: string;
+  type: 'cooked' | 'shared' | 'favorite' | 'post';
+  content?: string;
+  recipe_id?: string;
+  recipe_title?: string;
+  recipe_image?: string;
+  likes_count?: number;
+  comments_count?: number;
+  has_liked?: boolean;
+  created_at: string;
+}
+
+export interface PostComment {
+  id: string;
+  post_id: string;
+  user_id: string;
+  user_name: string;
+  user_avatar_color?: string;
+  content: string;
   created_at: string;
 }
 
@@ -83,4 +100,47 @@ export interface MealPlan {
   date: string; // ISO date string
   meal_type: 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack';
   is_meal_prep?: boolean;
+}
+
+export interface Friendship {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  status: 'pending' | 'accepted' | 'blocked';
+  created_at: string;
+  friend?: UserProfileData; // Joined user data
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  content: string;
+  media_url?: string;
+  media_type?: 'image' | 'video';
+  read: boolean;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  participant_ids: string[];
+  last_message?: {
+    content: string;
+    sender_id: string;
+    created_at: string;
+  };
+  updated_at: string;
+  participants?: UserProfileData[]; // Joined user data
+}
+
+export type AppErrorSeverity = 'info' | 'warning' | 'error' | 'critical';
+
+export interface AppError {
+  message: string;
+  code?: string;
+  severity: AppErrorSeverity;
+  retryable?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
 }

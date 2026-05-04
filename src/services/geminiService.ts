@@ -161,11 +161,42 @@ const cache = {
 };
 
 export async function generateRecipeImage(prompt: string): Promise<string> {
-  const searchTerms = encodeURIComponent(prompt.toLowerCase().replace(/recipe/g, '').replace(/[\W_]+/g, ' ').trim());
-  const fallbackUrl = `https://loremflickr.com/800/600/${searchTerms.replace(/\s+/g, ',')}/food`;
-  
-  // Skip AI image generation to save quota for recipes
-  return fallbackUrl;
+  const ai = getAI();
+  if (!ai) return `https://loremflickr.com/800/600/${encodeURIComponent(prompt.replace(/\s+/g, ','))},food`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          {
+            text: `A high-quality, professional food photography shot of ${prompt}. The lighting should be soft and natural, emphasizing textures and colors. Plated beautifully in a modern kitchen setting. Photorealistic, 4k.`,
+          },
+        ],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "4:3"
+        }
+      }
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+    
+    throw new Error('No image generated');
+  } catch (err) {
+    console.warn("AI Image generation failed, falling back to search:", err);
+    const searchTerms = prompt.toLowerCase()
+      .replace(/recipe/g, '')
+      .replace(/[\W_]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ',');
+    return `https://loremflickr.com/800/600/${encodeURIComponent(searchTerms)},food`;
+  }
 }
 
 export async function generateRecipes(preferences: UserPreferences, forceRefresh = false): Promise<Recipe[]> {
@@ -180,7 +211,8 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
     diet: preferences.diet,
     budget: preferences.budget,
     goal: preferences.calorieGoal,
-    meal: preferences.mealType
+    meal: preferences.mealType,
+    cuisines: preferences.cuisines
   });
 
   if (!forceRefresh) {
@@ -203,22 +235,22 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
   }
 
   try {
-    const prompt = `Generate 6 unique recipe recommendations that STRICTLY align with the following user profile:
+    const prompt = `Generate 6 unique, creative, and highly specific recipe recommendations.
     
-    CORE REQUIREMENTS:
+    USER PROFILE & CONSTRAINTS:
     - Meal Type: ${preferences.mealType || "Any"}
     - Diet: ${preferences.diet}
-    - Allergies/Restrictions: ${preferences.allergies?.join(", ") || "None"} (NEVER include these ingredients)
+    - Cuisines Preferred: ${preferences.cuisines?.join(", ") || "Diverse/Global"}
+    - Allergies (STRICTLY FORBIDDEN): ${preferences.allergies?.join(", ") || "None"}
     - Budget Level: ${preferences.budget}
-    - Calorie Target: Exactly ${preferences.calorieGoal || 500} kcal
+    - Calorie Target: ${preferences.calorieGoal || 500} kcal (+/- 50)
     
-    OUTPUT SPECIFICATIONS:
-    1. Title: Very descriptive, appetizing, and specific.
-    2. Estimated Cost: A numeric value in PHP. It MUST fall within the range for the ${preferences.budget} budget level.
-    3. Calories: A numeric value that strictly respects the target of ${preferences.calorieGoal || 500} kcal.
-    4. Tags: Include the diet type "${preferences.diet}", the specific cuisine name, "${preferences.mealType || "Any"}", and the budget level "${preferences.budget}".
-    5. Nutrients: Provide realistic protein, carb, and fat values that sum up to the specified calorie count.
-    6. imageSearchQuery: A short 2-3 word query for finding a food image of this dish.`;
+    QUALITY GUIDELINES:
+    1. Title: Creative and specific (e.g., "Crispy Pan-Seared Salmon with Miso-Ginger Glaze" instead of "Salmon").
+    2. Variety: Ensure a mix of flavors, textures, and cooking methods.
+    3. Localization: Since this is "Savoria Neighborhood", lean into warm, communal, and hearty meals.
+    4. Numeric Accuracy: Estimated cost MUST be in PHP and fit ${preferences.budget} (Budget: <100, Moderate: 100-300, Premium: >300).
+    5. Image Prompt: Provide a detailed "visualCues" field describing the dish's appearance for image generation.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -237,7 +269,7 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
               calories: { type: Type.NUMBER },
               budget: { type: Type.STRING },
               estimatedCost: { type: Type.NUMBER },
-              difficulty: { type: Type.STRING },
+              difficulty: { type: Type.STRING, enum: ['Easy', 'Medium', 'Hard'] },
               ingredients: { type: Type.ARRAY, items: { type: Type.STRING } },
               instructions: { type: Type.ARRAY, items: { type: Type.STRING } },
               nutrients: {
@@ -246,34 +278,41 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
                   protein: { type: Type.STRING },
                   carbs: { type: Type.STRING },
                   fat: { type: Type.STRING }
-                }
+                },
+                required: ["protein", "carbs", "fat"]
               },
               tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-              videoUrl: { type: Type.STRING },
-              imageSearchQuery: { type: Type.STRING }
+              visualCues: { type: Type.STRING }
             },
-            required: ["id", "title", "description", "prepTime", "calories", "budget", "estimatedCost", "difficulty", "ingredients", "instructions", "nutrients", "tags", "videoUrl", "imageSearchQuery"]
+            required: ["title", "description", "prepTime", "calories", "budget", "estimatedCost", "difficulty", "ingredients", "instructions", "nutrients", "tags", "visualCues"]
           }
         }
       }
     });
 
+    if (!response) {
+      throw new Error('No connection to AI service.');
+    }
+
     let text = (response.text || "").trim();
-    if (!text) throw new Error('No response from AI');
+    if (!text) throw new Error('AI returned no data.');
     
     let recipes: any[] = JSON.parse(text);
     
-    const finalRecipes = recipes.map(recipe => ({
-      ...recipe,
-      id: recipe.id || `ai-${Math.random().toString(36).substr(2, 9)}`,
-      image: `https://loremflickr.com/800/600/${encodeURIComponent(recipe.imageSearchQuery || recipe.title)},food/all`
+    // Generate images in parallel for all recipes
+    const recipesWithImages = await Promise.all(recipes.map(async (recipe) => {
+      const imageUrl = await generateRecipeImage(recipe.visualCues || recipe.title);
+      return {
+        ...recipe,
+        id: recipe.id || `ai-${Math.random().toString(36).substr(2, 9)}`,
+        image: imageUrl
+      };
     }));
-
+    
     // Save to cache
-    cache.set(cacheKey, finalRecipes);
+    cache.set(cacheKey, recipesWithImages);
 
-    return finalRecipes;
-
+    return recipesWithImages;
   } catch (error: any) {
     console.error("Error generating recipes:", error);
     
@@ -289,9 +328,20 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
       isQuotaExhausted = true;
       quotaResetTime = Date.now() + 60000 + (Math.random() * 60000); // 1-2 minute cooldown
       console.warn("Global cooldown triggered due to rate limit");
+      const err = new Error('AI Chef is taking a coffee break (Quota exceeded). Using fallback recipes for now.');
+      (err as any).code = 'AI_QUOTA_EXHAUSTED';
+      throw err;
     }
 
-    return getFallbackRecipes(preferences);
+    if (error.message?.includes('network') || error.message?.includes('fetch')) {
+      const err = new Error('Network interruption while connecting to AI. Please check your signal.');
+      (err as any).code = 'NETWORK_ERROR';
+      throw err;
+    }
+
+    const err = new Error(error.message || 'The AI Kitchen is closed. Using favorite fallbacks.');
+    (err as any).code = 'GENERIC_AI_ERROR';
+    throw err;
   }
 }
 

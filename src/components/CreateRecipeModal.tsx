@@ -11,6 +11,7 @@ interface CreateRecipeModalProps {
 
 export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModalProps) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<Partial<Recipe>>({
     title: '',
     description: '',
@@ -48,6 +49,36 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    // Basic Validation
+    if (!recipe.title || recipe.title.trim().length < 3) {
+        setError('Recipe title must be at least 3 characters long.');
+        return;
+    }
+
+    if (!recipe.description || recipe.description.trim().length < 10) {
+        setError('Please provide a more descriptive summary (min 10 characters).');
+        return;
+    }
+
+    const validIngredients = recipe.ingredients?.filter(i => i.trim().length > 0) || [];
+    if (validIngredients.length < 2) {
+        setError('Please add at least 2 ingredients.');
+        return;
+    }
+
+    const validInstructions = recipe.instructions?.filter(i => i.trim().length > 0) || [];
+    if (validInstructions.length < 1) {
+        setError('Please add at least one step for the instructions.');
+        return;
+    }
+
+    if ((recipe.calories || 0) <= 0) {
+        setError('Calories must be a positive number.');
+        return;
+    }
+
     setLoading(true);
     try {
       let finalImageUrl = recipe.image;
@@ -58,6 +89,8 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
       const newRecipe: Recipe = {
         ...recipe as Recipe,
         id: Math.random().toString(36).substr(2, 9),
+        ingredients: validIngredients,
+        instructions: validInstructions,
         image: finalImageUrl || '',
         tags: [...(recipe.tags || []), 'User Created']
       };
@@ -65,8 +98,9 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
       if (success !== false) {
         onClose();
       }
-    } catch (error) {
-      console.error(error);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'An unexpected error occurred while saving.');
     } finally {
       setLoading(false);
     }
@@ -92,6 +126,19 @@ export default function CreateRecipeModal({ onClose, onSave }: CreateRecipeModal
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 overflow-y-auto flex-1 space-y-8">
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="p-4 bg-red-50 text-red-600 rounded-2xl flex items-center gap-3 text-sm font-bold border border-red-100"
+            >
+              <div className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <X size={14} />
+              </div>
+              {error}
+            </motion.div>
+          )}
+
           <div className="space-y-4">
             <label className="block text-base font-bold uppercase tracking-widest text-brand-ink">Recipe Title</label>
             <input 

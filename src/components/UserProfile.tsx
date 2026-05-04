@@ -178,19 +178,27 @@ export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory
             </button>
           </div>
 
-          <div className="pt-8 border-t border-black/5 dark:border-white/5">
-            <label className="block text-xs font-bold uppercase tracking-widest text-red-500 mb-4">Danger Zone</label>
-            <button 
-              onClick={() => {
-                if (confirm('Delete all your cooking history and feedbacks? This cannot be undone.')) {
-                  onDeleteHistory?.();
-                }
-              }}
-              className="w-full py-4 text-sm font-bold uppercase tracking-widest text-red-500 bg-red-500/5 hover:bg-red-500/10 border-2 border-red-500/20 rounded-2xl transition-all"
-            >
-              Delete Cooking History
-            </button>
-            <p className="mt-3 text-[10px] text-brand-ink-subtle text-center italic font-medium">This will remove all your cooked items and feedbacks from the community.</p>
+          {/* Danger Zone */}
+          <div className="pt-10 mt-10 border-t-2 border-red-500/10">
+            <div className="bg-red-50 dark:bg-red-950/20 rounded-3xl p-6 border border-red-100 dark:border-red-900/30">
+              <h3 className="text-red-600 dark:text-red-400 text-xs font-bold uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                <span className="w-2 h-2 bg-red-600 rounded-full animate-pulse" />
+                Danger Zone
+              </h3>
+              <p className="text-sm text-red-700/70 dark:text-red-300/60 mb-6 font-medium">
+                Resetting your account data will permanently remove all your cooking milestones, neighborhood activity, and feedbacks. This action cannot be reversed.
+              </p>
+              <button 
+                onClick={() => {
+                  if (confirm('Are you absolutely sure? This will permanently delete all your cooking history and feedbacks. This action is irreversible.')) {
+                    onDeleteHistory?.();
+                  }
+                }}
+                className="w-full py-4 text-xs font-bold uppercase tracking-widest text-white bg-red-600 hover:bg-red-700 rounded-2xl transition-all shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
+              >
+                Clear History & Feedbacks
+              </button>
+            </div>
           </div>
         </div>
       </div>

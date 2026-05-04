@@ -4,6 +4,7 @@ import { UserPreferences, Recipe, DietPreference, BudgetLevel } from '../types';
 import { generateRecipes } from '../services/geminiService';
 import { Sparkles, Loader2, ChefHat, Flame, Utensils, Zap, Filter, Search, X } from 'lucide-react';
 import RecipeCard from './RecipeCard';
+import { RecipeCardSkeleton } from './ui/Skeleton';
 
 interface AIRecipeLabProps {
   initialPreferences: UserPreferences;
@@ -12,6 +13,7 @@ interface AIRecipeLabProps {
   onToggleFavorite: (e: React.MouseEvent, id: string) => void;
   onRecipeClick: (recipe: Recipe) => void;
   onNotify?: (title: string, message: string, type: any) => void;
+  onRate?: (recipeId: string, rating: number) => void;
 }
 
 const DIETS: DietPreference[] = ['Keto', 'Vegan', 'Vegetarian', 'High Protein', 'High Carbs'];
@@ -19,7 +21,7 @@ const BUDGETS: BudgetLevel[] = ['Budget', 'Moderate', 'Premium'];
 const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Any'];
 const CUISINES = ['Filipino', 'Italian', 'Mexican', 'Japanese', 'Indian', 'Mediterranean', 'Thai', 'American', 'French', 'Chinese', 'Korean', 'Middle Eastern', 'Spanish', 'Greek', 'Vietnamese'];
 
-export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorites, onToggleFavorite, onRecipeClick, onNotify }: AIRecipeLabProps) {
+export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorites, onToggleFavorite, onRecipeClick, onNotify, onRate }: AIRecipeLabProps) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Recipe[]>([]);
   const [prefs, setPrefs] = useState<UserPreferences>(initialPreferences);
@@ -197,23 +199,12 @@ export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorite
             {loading ? (
               <motion.div 
                 key="loading-lab"
-                initial={{ opacity: 1 }}
+                initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="h-full flex flex-col items-center justify-center py-32 bg-white/20 dark:bg-brand-ink/5 rounded-[40px] border-2 border-dashed border-black/5 dark:border-white/5"
+                className="grid grid-cols-1 lg:grid-cols-2 gap-6"
               >
-                <div className="relative">
-                  <div className="w-24 h-24 bg-brand-olive/10 rounded-full flex items-center justify-center">
-                    <ChefHat size={48} className="text-brand-olive animate-bounce" />
-                  </div>
-                  <motion.div 
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 3, ease: 'linear' }}
-                    className="absolute -inset-4 border-2 border-dashed border-brand-olive/30 rounded-full"
-                  />
-                </div>
-                <h3 className="text-2xl font-serif mt-12 mb-2 italic text-brand-olive">The AI Chef is at work...</h3>
-                <p className="text-brand-ink-muted text-sm text-center max-w-xs">Crafting a bespoke culinary collection based on your unique laboratory parameters.</p>
+                {[...Array(4)].map((_, i) => <RecipeCardSkeleton key={i} />)}
               </motion.div>
             ) : results.length > 0 ? (
               <motion.div 
@@ -234,6 +225,7 @@ export default function AIRecipeLab({ initialPreferences, onSaveRecipe, favorite
                       onClick={onRecipeClick} 
                       isFavorite={favorites.includes(recipe.id)}
                       onToggleFavorite={(e) => onToggleFavorite(e, recipe.id)}
+                      onRate={onRate}
                     />
                   </motion.div>
                 ))}

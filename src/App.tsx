@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserPreferences, Recipe, Review, Notification, NewsfeedItem } from './types';
+import { UserPreferences, Recipe, Review, Notification, NewsfeedItem, AppError } from './types';
 import Onboarding from './components/Onboarding';
 import RecipeCard from './components/RecipeCard';
 import RecipeDetail from './components/RecipeDetail';
@@ -17,17 +17,22 @@ import Newsfeed from './components/Newsfeed';
 import PublicProfile from './components/PublicProfile';
 import MealPlanner from './components/MealPlanner';
 import AIRecipeLab from './components/AIRecipeLab';
+import Messenger from './components/Messenger';
+import Friends from './components/Friends';
 import { generateRecipes } from './services/geminiService';
-import { ChefHat, Search, SlidersHorizontal, LogOut, Sparkles, Loader2, Plus, Menu, X as CloseIcon, Utensils, Heart, MessageSquare, User as UserIcon, Settings, ChevronDown, Check, Moon, Sun, RefreshCw, Bell, Activity, Calendar, Microscope, Repeat, Clock } from 'lucide-react';
+import { RecipeCardSkeleton } from './components/ui/Skeleton';
+import { ChefHat, Search, SlidersHorizontal, LogOut, Sparkles, Loader2, Plus, Menu, X as CloseIcon, Utensils, Heart, MessageSquare, User as UserIcon, Settings, ChevronDown, Check, Moon, Sun, RefreshCw, Bell, Activity, Calendar, Microscope, Repeat, Clock, UserPlus } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
-type View = 'dashboard' | 'my-recipes' | 'favorites' | 'feedbacks' | 'profile' | 'newsfeed' | 'meal-planner' | 'ai-lab' | 'cooked' | 'public-profile';
+type View = 'dashboard' | 'my-recipes' | 'favorites' | 'feedbacks' | 'profile' | 'newsfeed' | 'meal-planner' | 'ai-lab' | 'cooked' | 'public-profile' | 'notifications' | 'friends' | 'messenger';
 
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string; id: string; avatarColor?: string; avatarUrl?: string } | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(false);
+  const [userDataLoading, setUserDataLoading] = useState(false);
+  const [newsfeedLoading, setNewsfeedLoading] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [viewedUser, setViewedUser] = useState<{ id: string; name: string; avatarColor: string; avatarUrl?: string } | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -43,7 +48,33 @@ export default function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [newsfeedItems, setNewsfeedItems] = useState<NewsfeedItem[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [appError, setAppError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<AppError | null>(null);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOnline) {
+      setAppError({
+        message: 'You are currently offline. Some features like recipe generation and meal swap may not work.',
+        severity: 'warning',
+        code: 'OFFLINE'
+      });
+    } else if (appError?.code === 'OFFLINE') {
+      setAppError(null);
+    }
+  }, [isOnline]);
 
   const isConfigured = !!(
     (import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY.startsWith('AIza')) && 
@@ -145,6 +176,7 @@ export default function App() {
 
     // Fetch initial newsfeed
     const fetchNewsfeed = async () => {
+      setNewsfeedLoading(true);
       try {
         const { data } = await supabase
           .from('newsfeed')
@@ -154,6 +186,8 @@ export default function App() {
         if (data) setNewsfeedItems(data);
       } catch (err) {
         console.error("Failed to fetch newsfeed:", err);
+      } finally {
+        setNewsfeedLoading(false);
       }
     };
 
@@ -216,6 +250,78 @@ export default function App() {
     if (error) console.error('Error adding newsfeed item:', error);
   };
 
+  const addNewsfeedPost = async (content: string, image?: string) => {
+    if (!user) return;
+    
+    const newPost = {
+      id: `temp-${Date.now()}`,
+      user_id: user.id,
+      user_name: user.name,
+      user_avatar_color: user.avatarColor,
+      user_avatar_url: user.avatarUrl,
+      type: 'post' as const,
+      content,
+      recipe_image: image,
+      likes_count: 0,
+      comments_count: 0,
+      created_at: new Date().toISOString()
+    };
+
+    // Optimistic update
+    setNewsfeedItems(prev => [newPost, ...prev]);
+
+    if (user.id.startsWith('guest-')) {
+      addNotification('Guest Mode', 'Your post was added locally but will not be saved permanently. Sign in to share with everyone!', 'system');
+      return;
+    }
+
+    const { error } = await supabase.from('newsfeed').insert({
+      user_id: user.id,
+      user_name: user.name,
+      user_avatar_color: user.avatarColor,
+      user_avatar_url: user.avatarUrl,
+      type: 'post',
+      content,
+      recipe_image: image,
+      likes_count: 0,
+      comments_count: 0
+    });
+
+    if (error) {
+      console.error('Error adding newsfeed post:', error);
+      // Rollback on error
+      setNewsfeedItems(prev => prev.filter(p => p.id !== newPost.id));
+      addNotification('Post Failed', 'Could not share your post. Please try again.', 'system');
+    }
+  };
+
+  const togglePostLike = async (postId: string) => {
+    if (!user || user.id.startsWith('guest-')) return;
+    const post = newsfeedItems.find(p => p.id === postId);
+    if (!post) return;
+
+    const hasLiked = post.has_liked;
+    const currentLikes = post.likes_count || 0;
+    const newLikes = hasLiked ? Math.max(0, currentLikes - 1) : currentLikes + 1;
+    
+    // Optimistic UI update
+    setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: !hasLiked, likes_count: newLikes } : p));
+
+    try {
+      const { error } = await supabase
+        .from('newsfeed')
+        .update({ likes_count: newLikes })
+        .eq('id', postId);
+        
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error toggling like:', err);
+      // Rollback on error
+      setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: hasLiked, likes_count: currentLikes } : p));
+      addNotification('Network Error', 'Failed to update like status.', 'system');
+    }
+  };
+
   const deleteNewsfeedItem = async (itemId: string) => {
     if (!user || user.id.startsWith('guest-')) return;
     const { error } = await supabase.from('newsfeed').delete().eq('id', itemId).eq('user_id', user.id);
@@ -223,6 +329,79 @@ export default function App() {
       console.error('Error deleting newsfeed item:', error);
     } else {
       setNewsfeedItems(prev => prev.filter(item => item.id !== itemId));
+    }
+  };
+
+  const addPostComment = async (postId: string, content: string) => {
+    if (!user) return;
+
+    // Increment comment count locally
+    setNewsfeedItems(prev => prev.map(p => 
+      p.id === postId ? { ...p, comments_count: (p.comments_count || 0) + 1 } : p
+    ));
+
+    if (user.id.startsWith('guest-')) {
+      addNotification('Guest Mode', 'Your comment was added locally but will not be saved permanently.', 'system');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('post_comments').insert({
+        post_id: postId,
+        user_id: user.id,
+        user_name: user.name,
+        user_avatar_color: user.avatarColor,
+        content: content
+      });
+
+      if (error) throw error;
+
+      // Update the post's comment count in database
+      const { data: post } = await supabase.from('newsfeed').select('comments_count').eq('id', postId).single();
+      await supabase.from('newsfeed').update({ 
+        comments_count: (post?.comments_count || 0) + 1 
+      }).eq('id', postId);
+
+    } catch (err) {
+      console.error('Error posting comment:', err);
+    }
+  };
+
+  const handleRate = async (recipeId: string, starRating: number) => {
+    // Optimistically update local state
+    const updateInList = (list: Recipe[]) => 
+      list.map(r => {
+        if (r.id === recipeId) {
+          const currentCount = r.ratingCount || 0;
+          const currentRating = r.rating || 0;
+          const newCount = currentCount + 1;
+          const newRating = ((currentRating * currentCount) + starRating) / newCount;
+          return { ...r, rating: newRating, ratingCount: newCount };
+        }
+        return r;
+      });
+
+    setRecipes(prev => updateInList(prev));
+    setUserRecipes(prev => updateInList(prev));
+    
+    addNotification('Rating Added!', `You gave this recipe ${starRating} stars.`, 'system');
+
+    // In a real app, you would persist this to the database
+    if (user && !user.id.startsWith('guest-')) {
+      try {
+        const targetRecipe = allAvailableRecipes.find(r => r.id === recipeId);
+        if (targetRecipe) {
+           await supabase.from('global_recipes').update({
+             recipe_data: {
+               ...targetRecipe,
+               rating: ((targetRecipe.rating || 0) * (targetRecipe.ratingCount || 0) + starRating) / ((targetRecipe.ratingCount || 0) + 1),
+               ratingCount: (targetRecipe.ratingCount || 0) + 1
+             }
+           }).eq('id', recipeId);
+        }
+      } catch (err) {
+        console.error("Error persisting rating:", err);
+      }
     }
   };
 
@@ -248,14 +427,37 @@ export default function App() {
 
   const clearAllHistory = async () => {
     if (!user || user.id.startsWith('guest-')) return;
-    const { error } = await supabase.from('reviews').delete().eq('user_id', user.id);
-    if (error) {
-      console.error('Error clearing history:', error);
-    } else {
+    
+    try {
+      // Delete reviews (feedbacks and cooking history)
+      const { error: reviewsError } = await supabase.from('reviews').delete().eq('user_id', user.id);
+      if (reviewsError) throw reviewsError;
+
+      // Delete newsfeed items (posts and activity)
+      const { error: newsfeedError } = await supabase.from('newsfeed').delete().eq('user_id', user.id);
+      if (newsfeedError) throw newsfeedError;
+
+      // Delete post comments
+      const { error: commentsError } = await supabase.from('post_comments').delete().eq('user_id', user.id);
+      if (commentsError) throw commentsError;
+
+      // Delete notifications
+      const { error: notifError } = await supabase.from('notifications').delete().eq('user_id', user.id);
+      if (notifError) throw notifError;
+
       setReviews([]);
       setCookedIds([]);
-      addNotification('History Cleared', 'All your cooking history and feedbacks have been removed.', 'system');
+      setNewsfeedItems(prev => prev.filter(item => item.user_id !== user.id));
+      setNotifications([]);
+      
+      addNotification('Data Cleared', 'All your history, feedbacks, and activities have been removed.', 'system');
       setView('dashboard');
+    } catch (err) {
+      console.error('Error clearing history:', err);
+      setAppError({
+        message: 'Failed to clear some data. Please try again.',
+        severity: 'error'
+      });
     }
   };
 
@@ -308,6 +510,7 @@ export default function App() {
       // We can set some default preferences if needed
       return;
     }
+    setUserDataLoading(true);
     try {
       // Fetch preferences
       const { data: profile, error: profileError } = await supabase
@@ -334,7 +537,12 @@ export default function App() {
               setRecipes(generated);
             } catch (genErr: any) {
               console.error('Error generating recipes:', genErr);
-              addNotification('Service Busy', genErr.message || 'The AI Chef is busy right now. Please try again later.', 'system');
+              setAppError({
+                message: genErr.message || 'AI Chef is busy. Using fallbacks.',
+                severity: 'warning',
+                code: genErr.code
+              });
+              setRecipes([]);
             } finally {
               setLoading(false);
             }
@@ -399,6 +607,8 @@ export default function App() {
 
     } catch (err) {
       console.error('Unexpected error fetching user data:', err);
+    } finally {
+      setUserDataLoading(false);
     }
   };
 
@@ -427,7 +637,17 @@ export default function App() {
       addNotification('Recipes Ready!', 'We have curated some fresh recipes just for you.', 'recipe_ready');
     } catch (err: any) {
       console.error('Error completing onboarding:', err);
-      addNotification('Generation Failed', err.message || 'We couldn\'t generate your initial recipes. Try manually generating in the Lab.', 'system');
+      setAppError({
+        message: err.message || 'Failed to generate recipes. Please try again from the AI Lab.',
+        severity: 'error',
+        code: err.code,
+        retryable: true,
+        actionLabel: 'Try Lab',
+        onAction: () => {
+          setView('ai-lab');
+          setAppError(null);
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -629,7 +849,11 @@ export default function App() {
       setLoading(false);
     } catch (err: any) {
       console.error('Error refreshing recipes:', err);
-      addNotification('Refresh Failed', err.message || 'We couldn\'t refresh your recipes right now.', 'system');
+      setAppError({
+        message: err.message || 'Could not update recipes. Check your connection.',
+        severity: 'error',
+        code: err.code
+      });
       setLoading(false);
     }
   };
@@ -791,25 +1015,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-brand-cream pb-20">
-      {/* Header */}
-      <header className="bg-white dark:bg-brand-ink/20 border-b border-black/5 sticky top-0 z-40 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+      {/* FB Lite style layout but with Savoria branding */}
+      <header className="bg-white dark:bg-brand-card border-b border-black/5 sticky top-0 z-40 transition-colors">
+        <div className="max-w-xl mx-auto flex items-center justify-between px-4 h-14">
           <div className="flex items-center gap-2">
-            <ChefHat className="text-brand-olive" size={28} />
-            <span className="text-xl font-serif font-bold tracking-tight">Savoria</span>
+            <ChefHat className="text-brand-olive" size={24} />
+            <span className="text-2xl font-serif font-black tracking-tight text-brand-ink">savoria</span>
           </div>
-          
-          <div className="flex items-center gap-4 md:gap-6">
-            {/* Dark Mode Toggle */}
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-3 rounded-full border-2 border-black/5 hover:border-brand-olive/30 transition-all bg-white dark:bg-brand-ink/10 text-brand-olive shadow-sm"
-              title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => {}}
+              className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full text-brand-ink"
             >
-              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+              <Search size={22} />
             </button>
-
-            {/* Logout Button (Quick Access) */}
             <button 
               onClick={async () => {
                 if (confirm('Log out of Savoria?')) {
@@ -818,49 +1037,84 @@ export default function App() {
                   setUser(null);
                 }
               }}
-              className="flex p-3 rounded-full border-2 border-black/5 hover:border-red-500/30 hover:text-red-500 transition-all bg-white dark:bg-brand-ink/10 text-brand-ink-subtle shadow-sm"
+              className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full text-brand-ink"
               title="Logout"
             >
-              <LogOut size={18} />
+              <LogOut size={22} />
             </button>
+          </div>
+        </div>
 
-            {/* User Avatar - Clickable to go to Profile */}
-            <button 
-              onClick={() => setView('profile')}
-              className="flex items-center gap-3 group hover:opacity-80 transition-all"
-              title="View Profile"
+        {/* Global Error Banner */}
+        <AnimatePresence>
+          {appError && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className={`border-t border-black/5 px-4 py-2 flex items-center justify-between text-xs font-bold ${
+                appError.severity === 'error' ? 'bg-red-500 text-white' : 
+                appError.severity === 'warning' ? 'bg-amber-400 text-brand-ink' : 
+                'bg-brand-olive text-white'
+              }`}
             >
-              <div className="hidden sm:flex flex-col items-end">
-                <span className="text-xs font-bold text-brand-ink uppercase tracking-widest leading-none mb-1 group-hover:text-brand-olive transition-colors">{user.name}</span>
-                <span className="text-xs text-brand-ink-subtle font-medium leading-none">View Profile</span>
+              <div className="flex items-center gap-2">
+                {appError.severity === 'error' ? <CloseIcon size={14} /> : <Bell size={14} />}
+                <p>{appError.message}</p>
               </div>
-              <div 
-                className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-lg border-2 border-white ring-1 ring-black/5 group-hover:scale-105 transition-transform overflow-hidden"
-                style={{ backgroundColor: user.avatarColor || '#5A5A40' }}
-              >
-                {user.avatarUrl ? (
-                  <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  user.name.charAt(0).toUpperCase()
+              <div className="flex items-center gap-2">
+                {appError.actionLabel && (
+                  <button 
+                    onClick={appError.onAction}
+                    className="underline decoration-2"
+                  >
+                    {appError.actionLabel}
+                  </button>
                 )}
-              </div>
-            </button>
-
-              {/* Menu Button */}
-              <div className="relative">
-                <button 
-                  onClick={() => setIsMenuOpen(!isMenuOpen)}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-full border-2 border-black/5 hover:border-brand-olive/30 transition-all font-bold uppercase tracking-widest text-sm bg-white dark:bg-brand-ink/10 shadow-sm"
-                >
-                  {isMenuOpen ? <CloseIcon size={18} className="text-brand-olive" /> : <Menu size={18} className="text-brand-olive" />}
-                  <span>Menu</span>
+                <button onClick={() => setAppError(null)} className="p-1 hover:bg-black/10 rounded">
+                  <CloseIcon size={14} />
                 </button>
               </div>
-            </div>
-          </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* Navigation Tabs */}
+        <div className="max-w-xl mx-auto flex h-12">
+          {[
+            { id: 'newsfeed', icon: <Activity size={22} /> },
+            { id: 'friends', icon: <UserPlus size={22} /> },
+            { id: 'messenger', icon: <MessageSquare size={22} /> },
+            { id: 'ai-lab', icon: <Sparkles size={22} /> },
+            { id: 'notifications', icon: (
+              <div className="relative">
+                <Bell size={22} />
+                {notifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                    {notifications.filter(n => !n.read).length}
+                  </span>
+                )}
+              </div>
+            ) },
+            { id: 'profile', icon: <UserIcon size={22} /> },
+            { id: 'dashboard', icon: <Utensils size={22} /> },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setView(tab.id as View)}
+              className={`flex-1 flex items-center justify-center border-b-2 transition-all ${
+                view === tab.id 
+                  ? 'border-brand-olive text-brand-olive' 
+                  : 'border-transparent text-brand-ink-subtle opacity-50 hover:opacity-100'
+              }`}
+            >
+              {tab.icon}
+            </button>
+          ))}
+        </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 pt-12">
+      <main className="max-w-7xl mx-auto px-4 pt-4 min-h-screen">
         <AnimatePresence mode="wait">
           {view === 'dashboard' && (
             <motion.div
@@ -964,9 +1218,10 @@ export default function App() {
 
               {/* Recipe Grid */}
               {loading ? (
-                <div className="flex flex-col items-center justify-center py-32">
-                  <div className="w-12 h-12 border-4 border-brand-olive border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-brand-ink-muted font-serif italic text-xl">Curating your personalized recipes...</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                  {[...Array(6)].map((_, i) => (
+                    <RecipeCardSkeleton key={i} />
+                  ))}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -983,6 +1238,7 @@ export default function App() {
                         isFavorite={favorites.includes(recipe.id)}
                         onToggleFavorite={(e) => toggleFavorite(e, recipe.id)}
                         onUpdateRecipe={handleUpdateRecipe}
+                        onRate={handleRate}
                       />
                     </motion.div>
                   ))}
@@ -1001,6 +1257,67 @@ export default function App() {
             </motion.div>
           )}
 
+          {view === 'notifications' && (
+            <motion.div
+              key="notifications"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="max-w-xl mx-auto space-y-4"
+            >
+              <div className="flex items-center justify-between px-1">
+                <h2 className="text-2xl font-black text-brand-ink">Notifications</h2>
+                <button 
+                  onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                  className="text-[#1877F2] font-bold text-sm hover:underline"
+                >
+                  Mark all as read
+                </button>
+              </div>
+              <div className="bg-white dark:bg-brand-card rounded-lg shadow-sm border border-black/5 overflow-hidden">
+                {notifications.length === 0 ? (
+                  <div className="p-12 text-center text-gray-500 italic">
+                    <p>No new notifications.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-black/5">
+                    {notifications.map((notif) => (
+                      <div 
+                        key={notif.id} 
+                        className={`p-4 flex gap-4 hover:bg-gray-50 transition-colors cursor-pointer ${notif.read ? 'opacity-60' : 'bg-[#E7F3FF]/30'}`}
+                        onClick={() => {
+                          setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                          if (notif.link) {
+                            // Handle internal links
+                            if (notif.link === 'newsfeed') setView('newsfeed');
+                          }
+                        }}
+                      >
+                        <div className={`w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white ${
+                          notif.type === 'system' ? 'bg-blue-500' : 
+                          notif.type === 'recipe_ready' ? 'bg-green-500' : 
+                          'bg-brand-olive'
+                        }`}>
+                          {notif.type === 'system' ? <Bell size={24} /> : <ChefHat size={24} />}
+                        </div>
+                        <div className="flex-grow">
+                          <p className="text-brand-ink font-bold leading-tight">{notif.title}</p>
+                          <p className="text-sm text-brand-ink-subtle mt-1">{notif.message}</p>
+                          <p className="text-[11px] text-[#1877F2] font-bold mt-2 uppercase">
+                            {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        {!notif.read && (
+                          <div className="w-3 h-3 rounded-full bg-[#1877F2] self-center" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {view === 'newsfeed' && (
             <motion.div
               key="newsfeed"
@@ -1010,14 +1327,24 @@ export default function App() {
             >
               <Newsfeed 
                 items={newsfeedItems} 
+                currentUser={{
+                  id: user.id,
+                  name: user.name,
+                  email: user.email,
+                  avatarColor: user.avatarColor || '#5A5A40',
+                  avatarUrl: user.avatarUrl
+                }}
+                loading={newsfeedLoading}
                 onRecipeClick={(id) => {
+                  if (!id) return;
                   const recipe = allAvailableRecipes.find(r => r.id === id);
                   if (recipe) setSelectedRecipe(recipe);
                 }}
-                onPostClick={() => setIsCreateModalOpen(true)}
+                onPostClick={addNewsfeedPost}
                 onUserClick={handleUserClick}
-                currentUserId={user?.id}
                 onDeletePost={deleteNewsfeedItem}
+                onLikePost={togglePostLike}
+                onCommentPost={addPostComment}
               />
             </motion.div>
           )}
@@ -1033,6 +1360,20 @@ export default function App() {
                 user={viewedUser}
                 onBack={() => setView('newsfeed')}
                 onRecipeClick={(recipe) => setSelectedRecipe(recipe)}
+                currentUser={user}
+                onFriendRequest={async (targetId) => {
+                  if (user.id.startsWith('guest-')) {
+                    addNotification('Guest Mode', 'Please sign in to add friends!', 'system');
+                    return;
+                  }
+                  await supabase.from('friendships').insert({
+                    sender_id: user.id,
+                    receiver_id: targetId,
+                    status: 'pending'
+                  });
+                  addNotification('Friend Request Sent', 'Waiting for confirmation.', 'system');
+                }}
+                onMessageClick={() => setView('messenger')}
               />
             </motion.div>
           )}
@@ -1066,6 +1407,7 @@ export default function App() {
                 onToggleFavorite={toggleFavorite}
                 onRecipeClick={setSelectedRecipe}
                 onNotify={(title, msg, type) => addNotification(title, msg, type)}
+                onRate={handleRate}
                 onSaveRecipe={(recipe) => {
                   setRecipes(prev => [recipe, ...prev]);
                   addNotification('New Discovery!', `You've generated ${recipe.title} in the Laboratory.`, 'recipe_ready');
@@ -1101,6 +1443,47 @@ export default function App() {
             </motion.div>
           )}
 
+          {view === 'friends' && (
+            <motion.div
+              key="friends"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <Friends 
+                currentUser={{
+                  id: user.id,
+                  name: user.name,
+                  email: user.email,
+                  avatarColor: user.avatarColor || '#1877F2',
+                  avatarUrl: user.avatarUrl
+                }}
+                onUserClick={handleUserClick}
+                onMessageClick={() => setView('messenger')}
+              />
+            </motion.div>
+          )}
+
+          {view === 'messenger' && (
+            <motion.div
+              key="messenger"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <Messenger 
+                currentUser={{
+                  id: user.id,
+                  name: user.name,
+                  email: user.email,
+                  avatarColor: user.avatarColor || '#1877F2',
+                  avatarUrl: user.avatarUrl
+                }}
+                onUserClick={handleUserClick}
+              />
+            </motion.div>
+          )}
+
           {(view === 'my-recipes' || view === 'favorites' || view === 'feedbacks' || view === 'cooked') && (
             <motion.div
               key="kitchen"
@@ -1113,12 +1496,14 @@ export default function App() {
                 cooked={cookedRecipes}
                 userRecipes={userRecipes}
                 reviews={reviews}
+                loading={userDataLoading}
                 onRecipeClick={setSelectedRecipe}
                 onPostRecipe={() => setIsCreateModalOpen(true)}
                 favoriteIds={favorites}
                 onToggleFavorite={toggleFavorite}
                 activeTab={view === 'my-recipes' ? 'posts' : view === 'favorites' ? 'favorites' : view === 'feedbacks' ? 'feedbacks' : 'cooked'}
                 onUpdateRecipe={handleUpdateRecipe}
+                onRate={handleRate}
                 currentUserId={user?.id}
                 onDeleteUserRecipe={deleteUserRecipe}
                 onDeleteReview={deleteReview}
