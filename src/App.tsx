@@ -761,11 +761,15 @@ export default function App() {
     // Strictly align with user's chosen budget level and diet if filter is 'All'
     const matchesBudget = filter === 'All' ? r.budget === preferences.budget : (r.budget === filter || r.tags.includes(filter));
     const matchesDiet = filter === 'All' ? r.tags.includes(preferences.diet) : true;
+    // New: Match user's preferred cuisines if filter is 'All' and cuisines are selected
+    const matchesCuisine = (filter === 'All' && preferences.cuisines.length > 0)
+      ? r.tags.some(tag => preferences.cuisines.includes(tag))
+      : true;
     // Specific calorie target logic: Within +/- 150 calories of the slider
     const matchesCalories = r.calories >= (calorieFilter - 150) && r.calories <= (calorieFilter + 150);
     const matchesSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          r.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesBudget && matchesDiet && matchesSearch && matchesCalories;
+    return matchesBudget && matchesDiet && matchesCuisine && matchesSearch && matchesCalories;
   });
 
   const allTags = Array.from(new Set(['All', ...recipes.flatMap(r => r.tags), ...recipes.map(r => r.budget)]));
