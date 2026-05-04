@@ -89,6 +89,7 @@ export interface PostComment {
   user_id: string;
   user_name: string;
   user_avatar_color?: string;
+  user_avatar_url?: string;
   content: string;
   created_at: string;
 }
@@ -120,6 +121,7 @@ export interface Message {
   content: string;
   media_url?: string;
   media_type?: 'image' | 'video';
+  is_deleted?: boolean;
   read: boolean;
   created_at: string;
 }
@@ -132,6 +134,7 @@ export interface Conversation {
     sender_id: string;
     created_at: string;
   };
+  is_restricted?: boolean;
   updated_at: string;
   participants?: UserProfileData[]; // Joined user data
 }

@@ -18,6 +18,9 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [isRestricted, setIsRestricted] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,16 +59,24 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
     // Subscribe to messages in active conversation
     let subscription: any;
     if (activeConversation) {
+      fetchMessages(activeConversation.id);
+      checkBlockingStatus();
+      setIsRestricted(activeConversation.is_restricted || false);
+      
       subscription = supabase
         .channel(`conversation:${activeConversation.id}`)
         .on('postgres_changes', { 
-          event: 'INSERT', 
+          event: '*', 
           schema: 'public', 
           table: 'messages',
           filter: `conversation_id=eq.${activeConversation.id}`
         }, (payload) => {
-          const newMessage = payload.new as Message;
-          setMessages(prev => [...prev, newMessage]);
+          if (payload.eventType === 'INSERT') {
+            const newMessage = payload.new as Message;
+            setMessages(prev => [...prev, newMessage]);
+          } else if (payload.eventType === 'UPDATE') {
+            setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m));
+          }
         })
         .subscribe();
     }
@@ -160,9 +171,21 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
     }
   };
 
+  const checkBlockingStatus = async () => {
+    if (!activeConversation || !currentUser) return;
+    const otherUser = getOtherParticipant(activeConversation);
+    
+    const { data } = await supabase
+      .from('blocks')
+      .select('*')
+      .or(`and(blocker_id.eq.${currentUser.id},blocked_id.eq.${otherUser.id}),and(blocker_id.eq.${otherUser.id},blocked_id.eq.${currentUser.id})`);
+    
+    setIsBlocked(!!data && data.length > 0);
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!newMessage.trim() || !activeConversation) return;
+    if (!newMessage.trim() || !activeConversation || isBlocked || isRestricted) return;
 
     const messageContent = newMessage;
     setNewMessage('');
@@ -233,6 +256,62 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
       console.error('Error uploading file:', err);
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const deleteMessage = async (msgId: string) => {
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .update({ is_deleted: true, content: 'This message was removed' })
+        .eq('id', msgId)
+        .eq('sender_id', currentUser.id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error deleting message:', err);
+    }
+  };
+
+  const toggleRestrict = async () => {
+    if (!activeConversation) return;
+    const newRestricted = !isRestricted;
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_restricted: newRestricted })
+        .eq('id', activeConversation.id);
+
+      if (error) throw error;
+      setIsRestricted(newRestricted);
+      setShowOptions(false);
+    } catch (err) {
+      console.error('Error toggling restriction:', err);
+    }
+  };
+
+  const handleBlock = async () => {
+    if (!activeConversation) return;
+    const otherUser = getOtherParticipant(activeConversation);
+    try {
+      if (isBlocked) {
+        await supabase
+          .from('blocks')
+          .delete()
+          .eq('blocker_id', currentUser.id)
+          .eq('blocked_id', otherUser.id);
+      } else {
+        await supabase
+          .from('blocks')
+          .insert({
+            blocker_id: currentUser.id,
+            blocked_id: otherUser.id
+          });
+      }
+      setIsBlocked(!isBlocked);
+      setShowOptions(false);
+    } catch (err) {
+      console.error('Error toggling block:', err);
     }
   };
 
@@ -367,9 +446,34 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
                   <img src={getOtherParticipant(activeConversation).avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
                 ) : getOtherParticipant(activeConversation).name.charAt(0).toUpperCase()}
               </div>
-              <div className="cursor-pointer" onClick={() => onUserClick?.(getOtherParticipant(activeConversation).id)}>
+              <div className="cursor-pointer flex-grow" onClick={() => onUserClick?.(getOtherParticipant(activeConversation).id)}>
                 <h4 className="font-bold text-brand-ink hover:underline">{getOtherParticipant(activeConversation).name}</h4>
                 <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Active now</p>
+              </div>
+
+              <div className="relative">
+                <button 
+                  onClick={() => setShowOptions(!showOptions)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
+                >
+                  <MoreVertical size={20} />
+                </button>
+                {showOptions && (
+                  <div className="absolute right-0 top-full mt-1 bg-white dark:bg-brand-ink border border-black/10 dark:border-white/10 rounded-lg shadow-lg z-50 py-1 w-48">
+                    <button 
+                      onClick={toggleRestrict}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 dark:hover:bg-white/5 font-medium"
+                    >
+                      {isRestricted ? 'Unrestrict' : 'Restrict'}
+                    </button>
+                    <button 
+                      onClick={handleBlock}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 dark:hover:bg-white/5 text-red-500 font-bold"
+                    >
+                      {isBlocked ? 'Unblock' : 'Block'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -409,24 +513,41 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
                         </div>
                       )}
                       
-                      <div className={`max-w-[75%] ${isMine ? 'items-end' : 'items-start'} flex flex-col`}>
-                        {msg.content && (
-                          <div className={`px-3 py-2 rounded-2xl text-sm ${
-                            isMine 
-                            ? 'bg-[#1877F2] text-white rounded-tr-none' 
-                            : 'bg-gray-200 dark:bg-brand-ink/20 text-brand-ink rounded-tl-none'
-                          }`}>
-                            {msg.content}
+                      <div className={`max-w-[75%] ${isMine ? 'items-end' : 'items-start'} flex flex-col group relative`}>
+                        {msg.is_deleted ? (
+                          <div className="px-3 py-2 rounded-2xl text-xs italic text-gray-400 border border-gray-100 dark:border-white/5">
+                            This message was removed
                           </div>
-                        )}
-                        {msg.media_url && (
-                          <div className={`rounded-xl overflow-hidden mt-1 border border-black/5 ${isMine ? 'rounded-tr-none' : 'rounded-tl-none'}`}>
-                            {msg.media_type === 'video' ? (
-                              <video src={msg.media_url} controls className="max-w-full max-h-60" />
-                            ) : (
-                              <img src={msg.media_url} alt="" className="max-w-full max-h-60 object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <>
+                            {msg.content && (
+                              <div className={`px-3 py-2 rounded-2xl text-sm ${
+                                isMine 
+                                ? 'bg-[#1877F2] text-white rounded-tr-none' 
+                                : 'bg-gray-200 dark:bg-brand-ink/20 text-brand-ink rounded-tl-none'
+                              }`}>
+                                {msg.content}
+                              </div>
                             )}
-                          </div>
+                            {msg.media_url && (
+                              <div className={`rounded-xl overflow-hidden mt-1 border border-black/5 ${isMine ? 'rounded-tr-none' : 'rounded-tl-none'}`}>
+                                {msg.media_type === 'video' ? (
+                                  <video src={msg.media_url} controls className="max-w-full max-h-60" />
+                                ) : (
+                                  <img src={msg.media_url} alt="" className="max-w-full max-h-60 object-cover" referrerPolicy="no-referrer" />
+                                )}
+                              </div>
+                            )}
+                            {isMine && !msg.is_deleted && (
+                              <button 
+                                onClick={() => deleteMessage(msg.id)}
+                                className="absolute -left-8 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Remove message"
+                              >
+                                <MoreVertical size={14} className="rotate-90" />
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -438,70 +559,82 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
 
             {/* Input */}
             <div className="p-3 border-t border-black/5 dark:border-white/5 space-y-3">
-              {isUploading && (
-                <div className="flex items-center gap-2 text-xs text-brand-olive font-bold">
-                  <div className="w-3 h-3 border-2 border-brand-olive border-t-transparent rounded-full animate-spin" />
-                  <span>Uploading media...</span>
+              {isBlocked ? (
+                <div className="text-center py-2 text-xs text-gray-500 font-medium">
+                  {isRestricted ? "This conversation is restricted." : "You cannot message this person."}
                 </div>
-              )}
-              <div className="flex items-center gap-2">
-                <div className="flex gap-1">
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
-                    title="Attach file"
-                  >
-                    <Paperclip size={20} />
-                  </button>
-                  <button 
-                    className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
-                    title="Send image"
-                    onClick={() => {
-                        if (fileInputRef.current) {
-                            fileInputRef.current.accept = "image/*";
-                            fileInputRef.current.click();
-                        }
-                    }}
-                  >
-                    <ImageIcon size={20} />
-                  </button>
-                  <button 
-                    className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
-                    title="Send video"
-                    onClick={() => {
-                        if (fileInputRef.current) {
-                            fileInputRef.current.accept = "video/*";
-                            fileInputRef.current.click();
-                        }
-                    }}
-                  >
-                    <Video size={20} />
-                  </button>
+              ) : isRestricted ? (
+                <div className="text-center py-2 text-xs text-gray-500 font-medium italic">
+                  Conversation restricted.
                 </div>
+              ) : (
+                <>
+                  {isUploading && (
+                    <div className="flex items-center gap-2 text-xs text-brand-olive font-bold">
+                      <div className="w-3 h-3 border-2 border-brand-olive border-t-transparent rounded-full animate-spin" />
+                      <span>Uploading media...</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
+                        title="Attach file"
+                      >
+                        <Paperclip size={20} />
+                      </button>
+                      <button 
+                        className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
+                        title="Send image"
+                        onClick={() => {
+                            if (fileInputRef.current) {
+                                fileInputRef.current.accept = "image/*";
+                                fileInputRef.current.click();
+                            }
+                        }}
+                      >
+                        <ImageIcon size={20} />
+                      </button>
+                      <button 
+                        className="p-2 text-brand-olive hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full"
+                        title="Send video"
+                        onClick={() => {
+                            if (fileInputRef.current) {
+                                fileInputRef.current.accept = "video/*";
+                                fileInputRef.current.click();
+                            }
+                        }}
+                      >
+                        <Video size={20} />
+                      </button>
+                    </div>
 
-                <form onSubmit={handleSendMessage} className="flex-grow flex gap-2">
-                  <div className="flex-grow relative">
-                    <input 
-                      type="text" 
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      placeholder="Aa"
-                      className="w-full px-4 py-2 bg-gray-100 dark:bg-brand-ink/20 border-none rounded-full text-[15px] focus:ring-1 focus:ring-[#1877F2]"
-                    />
-                    <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-olive opacity-60 hover:opacity-100">
-                      <Smile size={18} />
-                    </button>
+                    <form onSubmit={handleSendMessage} className="flex-grow flex gap-2">
+                      <div className="flex-grow relative">
+                        <input 
+                          type="text" 
+                          value={newMessage}
+                          onChange={(e) => setNewMessage(e.target.value)}
+                          placeholder="Aa"
+                          className="w-full px-4 py-2 bg-gray-100 dark:bg-brand-ink/20 border-none rounded-full text-[15px] focus:ring-1 focus:ring-[#1877F2]"
+                        />
+                        <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-olive opacity-60 hover:opacity-100">
+                          <Smile size={18} />
+                        </button>
+                      </div>
+                      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+                      <button 
+                        type="submit"
+                        disabled={!newMessage.trim() && !isUploading}
+                        className="p-2 text-[#1877F2] hover:scale-110 transition-transform disabled:opacity-30"
+                      >
+                        <Send size={24} fill="currentColor" />
+                      </button>
+                    </form>
                   </div>
-                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
-                  <button 
-                    type="submit"
-                    disabled={!newMessage.trim() && !isUploading}
-                    className="p-2 text-[#1877F2] hover:scale-110 transition-transform disabled:opacity-30"
-                  >
-                    <Send size={24} fill="currentColor" />
-                  </button>
-                </form>
-              </div>
+                </>
+              )}
             </div>
           </>
         ) : (

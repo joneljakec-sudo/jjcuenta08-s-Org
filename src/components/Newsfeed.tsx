@@ -350,7 +350,9 @@ export default function Newsfeed({
                                     className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-white text-[10px] font-bold cursor-pointer hover:opacity-80 transition-opacity"
                                     style={{ backgroundColor: comment.user_avatar_color || '#1877F2' }}
                                   >
-                                    {comment.user_name.charAt(0).toUpperCase()}
+                                    {comment.user_avatar_url ? (
+                                      <img src={comment.user_avatar_url} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                                    ) : comment.user_name.charAt(0).toUpperCase()}
                                   </div>
                                   <div className="flex-grow">
                                     <div className="bg-gray-100 dark:bg-brand-ink/10 rounded-2xl px-3 py-2 border border-black/5 dark:border-white/5">

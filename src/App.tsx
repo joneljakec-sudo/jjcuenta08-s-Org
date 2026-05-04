@@ -255,7 +255,25 @@ export default function App() {
           .limit(50);
         
         if (error) throw error;
-        if (data) setNewsfeedItems(data);
+        
+        if (data && user && !user.id.startsWith('guest-')) {
+          // Also fetch current user's likes
+          const { data: userLikes } = await supabase
+            .from('post_likes')
+            .select('post_id')
+            .eq('user_id', user.id);
+            
+          const likedPostIds = new Set(userLikes?.map(l => l.post_id) || []);
+          
+          const itemsWithLikes = data.map(item => ({
+            ...item,
+            has_liked: likedPostIds.has(item.id)
+          }));
+          
+          setNewsfeedItems(itemsWithLikes);
+        } else if (data) {
+          setNewsfeedItems(data);
+        }
       } catch (err) {
         console.error("Failed to fetch newsfeed:", err);
       } finally {
@@ -296,7 +314,7 @@ export default function App() {
             return [payload.new as NewsfeedItem, ...filtered];
           });
         } else if (payload.eventType === 'UPDATE') {
-          setNewsfeedItems(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+          setNewsfeedItems(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new, has_liked: p.has_liked } : p));
         } else if (payload.eventType === 'DELETE') {
           setNewsfeedItems(prev => prev.filter(p => p.id === payload.old.id));
         }
@@ -440,29 +458,34 @@ export default function App() {
     if (!user || user.id.startsWith('guest-')) return;
     const post = newsfeedItems.find(p => p.id === postId);
     if (!post) return;
-
+  
     const hasLiked = post.has_liked;
     const currentLikes = post.likes_count || 0;
     const newLikes = hasLiked ? Math.max(0, currentLikes - 1) : currentLikes + 1;
     
     // Optimistic UI update
     setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: !hasLiked, likes_count: newLikes } : p));
-
+  
     try {
-      // NOTE: In a properly secured Supabase app, you wouldn't update the post directly
-      // because RLS usually blocks updates from non-owners. 
-      // We'll try to update, but if it fails, we keep the local state updated for UX.
-      const { error } = await supabase
-        .from('newsfeed')
-        .update({ likes_count: newLikes })
-        .eq('id', postId);
-        
-      if (error) {
-        console.warn('Backend like update failed (likely RLS). Keeping local like for session.', error);
+      if (hasLiked) {
+        // Remove like
+        await supabase
+          .from('post_likes')
+          .delete()
+          .eq('post_id', postId)
+          .eq('user_id', user.id);
+      } else {
+        // Add like
+        await supabase
+          .from('post_likes')
+          .insert({
+            post_id: postId,
+            user_id: user.id
+          });
       }
     } catch (err) {
       console.error('Error toggling like:', err);
-      // We don't rollback here to avoid flickering if it's just an RLS issue on counts
+      // Rollback on hard error if needed, but triggers handle counts
     }
   };
 
@@ -479,7 +502,7 @@ export default function App() {
   const addPostComment = async (postId: string, content: string) => {
     if (!user) return;
 
-    // Increment comment count locally
+    // Increment comment count locally for immediate feedback
     setNewsfeedItems(prev => prev.map(p => 
       p.id === postId ? { ...p, comments_count: (p.comments_count || 0) + 1 } : p
     ));
@@ -495,24 +518,20 @@ export default function App() {
         user_id: user.id,
         user_name: user.name,
         user_avatar_color: user.avatarColor,
+        user_avatar_url: user.avatarUrl,
         content: content
       });
 
       if (error) throw error;
-
-      // Update the post's comment count in database
-      // Similar to likes, this might fail due to RLS if we don't own the post.
-      // We use a separate select to be safe.
-      const { data: post } = await supabase.from('newsfeed').select('comments_count').eq('id', postId).single();
-      if (post) {
-        const { error: updateError } = await supabase.from('newsfeed').update({ 
-          comments_count: (post.comments_count || 0) + 1 
-        }).eq('id', postId);
-        if (updateError) console.warn('Could not update comment count on post (RLS restriction).', updateError);
-      }
+      
+      // Note: Trigger in Supabase handles newsfeed.comments_count increment
 
     } catch (err: any) {
       console.error('Error posting comment:', err);
+      // Rollback optimistic update on error
+      setNewsfeedItems(prev => prev.map(p => 
+        p.id === postId ? { ...p, comments_count: Math.max(0, (p.comments_count || 0) - 1) } : p
+      ));
       addNotification('Comment Failed', err.message || 'Could not post comment.', 'system');
     }
   };
