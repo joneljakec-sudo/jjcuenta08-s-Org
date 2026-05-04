@@ -6,11 +6,13 @@ import { supabase } from '../lib/supabase';
 
 interface MessengerProps {
   currentUser: UserProfileData;
+  targetChatUser?: { id: string; name: string; avatarColor?: string; avatarUrl?: string } | null;
   onClose?: () => void;
   onUserClick?: (userId: string) => void;
+  clearTargetUser?: () => void;
 }
 
-export default function Messenger({ currentUser, onClose, onUserClick }: MessengerProps) {
+export default function Messenger({ currentUser, targetChatUser, onClose, onUserClick, clearTargetUser }: MessengerProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,7 +48,12 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
         // Filter in JS since array filters aren't supported in Realtime yet
         if (payload.new && payload.new.participant_ids?.includes(currentUser.id)) {
           if (payload.eventType === 'INSERT') {
-            setConversations(prev => [payload.new as Conversation, ...prev]);
+            const newConv = payload.new as Conversation;
+            setConversations(prev => {
+              const exists = prev.some(c => c.id === newConv.id);
+              if (exists) return prev;
+              return [newConv, ...prev];
+            });
           } else if (payload.eventType === 'UPDATE') {
             setConversations(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c).sort((a, b) => 
               new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -56,14 +63,18 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
       })
       .subscribe();
 
-    // Subscribe to messages in active conversation
-    let subscription: any;
+    return () => {
+      supabase.removeChannel(convSubscription);
+    };
+  }, []);
+
+  useEffect(() => {
     if (activeConversation) {
       fetchMessages(activeConversation.id);
       checkBlockingStatus();
       setIsRestricted(activeConversation.is_restricted || false);
       
-      subscription = supabase
+      const subscription = supabase
         .channel(`conversation:${activeConversation.id}`)
         .on('postgres_changes', { 
           event: '*', 
@@ -73,19 +84,50 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
         }, (payload) => {
           if (payload.eventType === 'INSERT') {
             const newMessage = payload.new as Message;
-            setMessages(prev => [...prev, newMessage]);
+            setMessages(prev => {
+              const exists = prev.some(m => m.id === newMessage.id);
+              if (exists) return prev;
+              return [...prev, newMessage];
+            });
           } else if (payload.eventType === 'UPDATE') {
             setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m));
           }
         })
         .subscribe();
-    }
 
-    return () => {
-      supabase.removeChannel(convSubscription);
-      if (subscription) supabase.removeChannel(subscription);
-    };
-  }, [activeConversation]);
+      return () => {
+        supabase.removeChannel(subscription);
+      };
+    }
+  }, [activeConversation?.id]);
+
+  useEffect(() => {
+    if (targetChatUser && conversations.length > 0) {
+      const existing = conversations.find(c => c.participant_ids.includes(targetChatUser.id));
+      if (existing) {
+        setActiveConversation(existing);
+        clearTargetUser?.();
+      } else {
+        // Prepare a "ghost" conversation for UI
+        const ghostConv: Conversation = {
+          id: `new-${targetChatUser.id}`,
+          participant_ids: [currentUser.id, targetChatUser.id],
+          updated_at: new Date().toISOString(),
+          participants: [
+            currentUser,
+            { 
+              id: targetChatUser.id, 
+              name: targetChatUser.name, 
+              avatarColor: targetChatUser.avatarColor || '#1877F2',
+              avatarUrl: targetChatUser.avatarUrl
+            }
+          ]
+        };
+        setActiveConversation(ghostConv);
+        setMessages([]);
+      }
+    }
+  }, [targetChatUser, conversations.length]);
 
   const fetchConversations = async () => {
     setLoading(true);
@@ -191,8 +233,26 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
     setNewMessage('');
 
     try {
+      let convId = activeConversation.id;
+
+      // Create conversation if it's a "ghost" one
+      if (convId.startsWith('new-')) {
+        const otherUserId = convId.replace('new-', '');
+        const { data: newConv, error: convErr } = await supabase.from('conversations').insert({
+          participant_ids: [currentUser.id, otherUserId],
+          updated_at: new Date().toISOString()
+        }).select().single();
+
+        if (convErr) throw convErr;
+        convId = newConv.id;
+        
+        // Refresh conversations to include the actual one
+        fetchConversations();
+        clearTargetUser?.();
+      }
+
       const { error: sendErr } = await supabase.from('messages').insert({
-        conversation_id: activeConversation.id,
+        conversation_id: convId,
         sender_id: currentUser.id,
         content: messageContent,
         media_type: 'text',
@@ -212,7 +272,21 @@ export default function Messenger({ currentUser, onClose, onUserClick }: Messeng
           created_at: new Date().toISOString()
         },
         updated_at: new Date().toISOString()
-      }).eq('id', activeConversation.id);
+      }).eq('id', convId);
+
+      if (activeConversation.id.startsWith('new-')) {
+        // If it was new, we should switch active conversation to the real one
+        const { data: realConv } = await supabase.from('conversations').select('*').eq('id', convId).single();
+        if (realConv) {
+          // Add participant profiles
+          const otherUserId = realConv.participant_ids.find((id: string) => id !== currentUser.id);
+          const { data: profile } = await supabase.from('profiles').select('id, name, avatar_url, avatar_color').eq('id', otherUserId).single();
+          setActiveConversation({
+            ...realConv,
+            participants: [currentUser, profile || { id: otherUserId, name: 'User', avatarColor: '#1877F2' }]
+          });
+        }
+      }
 
     } catch (err) {
       console.error('Error sending message:', err);

@@ -44,6 +44,7 @@ export default function App() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [filter, setFilter] = useState<string>('All');
   const [view, setView] = useState<View>('dashboard');
+  const [targetChatUser, setTargetChatUser] = useState<{ id: string; name: string; avatarColor?: string; avatarUrl?: string } | null>(null);
   const [calorieFilter, setCalorieFilter] = useState<number>(2000);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [userRecipes, setUserRecipes] = useState<Recipe[]>([]);
@@ -1558,7 +1559,10 @@ export default function App() {
                   });
                   addNotification('Friend Request Sent', 'Waiting for confirmation.', 'system');
                 }}
-                onMessageClick={() => setView('messenger')}
+                onMessageClick={() => {
+                  setTargetChatUser(viewedUser);
+                  setView('messenger');
+                }}
               />
             </motion.div>
           )}
@@ -1644,7 +1648,10 @@ export default function App() {
                   avatarUrl: user.avatarUrl
                 }}
                 onUserClick={handleUserClick}
-                onMessageClick={() => setView('messenger')}
+                onMessageClick={(targetUser) => {
+                  setTargetChatUser(targetUser);
+                  setView('messenger');
+                }}
               />
             </motion.div>
           )}
@@ -1664,7 +1671,9 @@ export default function App() {
                   avatarColor: user.avatarColor || '#1877F2',
                   avatarUrl: user.avatarUrl
                 }}
+                targetChatUser={targetChatUser}
                 onUserClick={handleUserClick}
+                clearTargetUser={() => setTargetChatUser(null)}
               />
             </motion.div>
           )}
