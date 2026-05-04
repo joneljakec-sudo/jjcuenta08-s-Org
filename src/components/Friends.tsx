@@ -65,8 +65,8 @@ export default function Friends({ currentUser, onUserClick, onMessageClick }: Fr
         .from('friendships')
         .select(`
           *,
-          sender:sender_id(*),
-          receiver:receiver_id(*)
+          sender:profiles!sender_id(id, name, avatar_url, avatar_color),
+          receiver:profiles!receiver_id(id, name, avatar_url, avatar_color)
         `)
         .or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`);
 
@@ -238,10 +238,10 @@ export default function Friends({ currentUser, onUserClick, onMessageClick }: Fr
                       <div 
                         onClick={() => f.friend && onUserClick?.(f.friend.id)}
                         className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold cursor-pointer"
-                        style={{ backgroundColor: f.friend?.avatarColor || '#1877F2' }}
+                        style={{ backgroundColor: f.friend?.avatar_color || f.friend?.avatarColor || '#1877F2' }}
                       >
-                        {f.friend?.avatarUrl ? (
-                          <img src={f.friend.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        {f.friend?.avatar_url || f.friend?.avatarUrl ? (
+                          <img src={f.friend.avatar_url || f.friend.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
                         ) : f.friend?.name.charAt(0).toUpperCase()}
                       </div>
                       <div>
@@ -282,10 +282,10 @@ export default function Friends({ currentUser, onUserClick, onMessageClick }: Fr
                     <div className="flex items-center gap-3">
                       <div 
                         className="w-16 h-16 rounded-full flex-shrink-0 flex items-center justify-center text-white text-xl font-bold"
-                        style={{ backgroundColor: r.friend?.avatarColor || '#1877F2' }}
+                        style={{ backgroundColor: r.friend?.avatar_color || r.friend?.avatarColor || '#1877F2' }}
                       >
-                        {r.friend?.avatarUrl ? (
-                          <img src={r.friend.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        {r.friend?.avatar_url || r.friend?.avatarUrl ? (
+                          <img src={r.friend.avatar_url || r.friend.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
                         ) : r.friend?.name.charAt(0).toUpperCase()}
                       </div>
                       <div>
@@ -329,10 +329,10 @@ export default function Friends({ currentUser, onUserClick, onMessageClick }: Fr
                           <div 
                             onClick={() => onUserClick?.(user.id)}
                             className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold cursor-pointer"
-                            style={{ backgroundColor: user.avatarColor || '#1877F2' }}
+                            style={{ backgroundColor: user.avatar_color || user.avatarColor || '#1877F2' }}
                           >
-                            {user.avatarUrl ? (
-                              <img src={user.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                            {user.avatar_url || user.avatarUrl ? (
+                              <img src={user.avatar_url || user.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
                             ) : user.name.charAt(0).toUpperCase()}
                           </div>
                           <div>

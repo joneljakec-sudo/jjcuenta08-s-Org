@@ -4,9 +4,11 @@ export type BudgetLevel = 'Budget' | 'Moderate' | 'Premium';
 export interface UserProfileData {
   id: string;
   name: string;
-  email: string;
-  avatarColor: string;
+  email?: string;
+  avatarColor?: string;
+  avatar_color?: string;
   avatarUrl?: string;
+  avatar_url?: string;
 }
 
 export interface UserPreferences {
