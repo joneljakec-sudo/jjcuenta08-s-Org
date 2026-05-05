@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Message, Conversation, UserProfileData } from '../types';
-import { Search, Send, Image as ImageIcon, Video, ArrowLeft, MoreVertical, Paperclip, Smile, MessageSquare } from 'lucide-react';
+import { Search, Send, Image as ImageIcon, Video, ArrowLeft, MoreVertical, Paperclip, Smile, MessageSquare, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface MessengerProps {
@@ -307,6 +307,13 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
         
         // Refresh conversations to include the actual one
         await fetchConversations();
+        
+        // Update active conversation in state immediately to the real one
+        const updatedConv = {
+          ...newConv,
+          participants: activeConversation.participants
+        };
+        setActiveConversation(updatedConv);
         clearTargetUser?.();
       }
 
@@ -324,7 +331,7 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
         throw sendErr;
       }
 
-      // Update conversation last message
+      // Update conversation last message and update_at for sorting
       await supabase.from('conversations').update({
         last_message: {
           content: messageContent,
@@ -333,20 +340,6 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
         },
         updated_at: new Date().toISOString()
       }).eq('id', convId);
-
-      if (activeConversation.id.startsWith('new-')) {
-        // If it was new, we should switch active conversation to the real one
-        const { data: realConv } = await supabase.from('conversations').select('*').eq('id', convId).single();
-        if (realConv) {
-          // Add participant profiles
-          const otherUserId = realConv.participant_ids.find((id: string) => id !== currentUser.id);
-          const { data: profile } = await supabase.from('profiles').select('id, name, avatar_url, avatar_color').eq('id', otherUserId).single();
-          setActiveConversation({
-            ...realConv,
-            participants: [currentUser, profile || { id: otherUserId, name: 'User', avatarColor: '#1877F2' }]
-          });
-        }
-      }
 
     } catch (err) {
       console.error('Error sending message:', err);

@@ -142,15 +142,8 @@ DROP TRIGGER IF EXISTS on_post_comment ON public.post_comments;
 CREATE TRIGGER on_post_comment AFTER INSERT OR DELETE ON public.post_comments FOR EACH ROW EXECUTE FUNCTION public.handle_post_comment();
 
 -- 5. RLS POLICIES
--- ... existing policies ...
-
--- 6. STORAGE BUCKETS (Note: Create these manually in Supabase Dashboard)
--- Create public bucket "profiles" for avatars
--- Create public bucket "assets" for chat media
--- Set storage RLS: 
---   1. Allow SELECT to all
---   2. Allow INSERT/UPDATE/DELETE to authenticated users for their own files
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.newsfeed ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
@@ -162,6 +155,12 @@ ALTER TABLE public.blocks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
+-- Newsfeed Policies
+CREATE POLICY "Newsfeed is viewable by everyone" ON public.newsfeed FOR SELECT USING (true);
+CREATE POLICY "Authenticated users can create posts" ON public.newsfeed FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage own posts" ON public.newsfeed FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY "Users can delete own posts" ON public.newsfeed FOR DELETE TO authenticated USING (auth.uid() = user_id);
+
 -- Allow all for authenticated for simplicity (adjust for production)
 CREATE POLICY "Manage own likes" ON public.post_likes FOR ALL TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "See all likes" ON public.post_likes FOR SELECT TO authenticated USING (true);
@@ -172,3 +171,9 @@ CREATE POLICY "Manage messages" ON public.messages FOR ALL TO authenticated USIN
 CREATE POLICY "Manage friendships" ON public.friendships FOR ALL TO authenticated USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
 CREATE POLICY "Manage blocks" ON public.blocks FOR ALL TO authenticated USING (auth.uid() = blocker_id);
 CREATE POLICY "See blocks" ON public.blocks FOR SELECT TO authenticated USING (true);
+
+-- Ensure replica identity is set for real-time updates
+ALTER TABLE public.conversations REPLICA IDENTITY FULL;
+ALTER TABLE public.messages REPLICA IDENTITY FULL;
+ALTER TABLE public.newsfeed REPLICA IDENTITY FULL;
+ALTER TABLE public.post_comments REPLICA IDENTITY FULL;
