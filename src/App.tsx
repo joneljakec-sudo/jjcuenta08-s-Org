@@ -484,9 +484,16 @@ export default function App() {
             user_id: user.id
           });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error toggling like:', err);
-      // No rollback needed for optimism as counts are trigger-based
+      // Rollback optimistic update on error
+      setNewsfeedItems(prev => prev.map(p => p.id === postId ? { ...p, has_liked: hasLiked, likes_count: currentLikes } : p));
+      
+      let errorMsg = 'Could not process like.';
+      if (err.code === '23503') errorMsg = 'Referenced post or user not found in database.';
+      else if (err.code === '42501') errorMsg = 'Permission denied. Are you signed in?';
+      
+      addNotification('Persistence Error', errorMsg, 'system');
     }
   };
 
@@ -533,7 +540,12 @@ export default function App() {
       setNewsfeedItems(prev => prev.map(p => 
         p.id === postId ? { ...p, comments_count: Math.max(0, (p.comments_count || 0) - 1) } : p
       ));
-      addNotification('Comment Failed', err.message || 'Could not post comment.', 'system');
+      
+      let errorMsg = 'Could not post comment.';
+      if (err.code === '23503') errorMsg = 'Post not found or user invalid in database.';
+      else if (err.code === '42501') errorMsg = 'Permission denied. Please sign in again.';
+      
+      addNotification('Comment Failed', errorMsg, 'system');
     }
   };
 

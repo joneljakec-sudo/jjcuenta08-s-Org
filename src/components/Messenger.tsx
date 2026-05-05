@@ -238,16 +238,24 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
       // Create conversation if it's a "ghost" one
       if (convId.startsWith('new-')) {
         const otherUserId = convId.replace('new-', '');
+        // Validate UUID format before inserting
+        if (!otherUserId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+          throw new Error('Invalid user ID format for conversation.');
+        }
+
         const { data: newConv, error: convErr } = await supabase.from('conversations').insert({
           participant_ids: [currentUser.id, otherUserId],
           updated_at: new Date().toISOString()
         }).select().single();
 
-        if (convErr) throw convErr;
+        if (convErr) {
+          console.error('Conv Creation Error:', convErr);
+          throw new Error(convErr.code === '42501' ? 'Permission denied while creating chat.' : 'Failed to start a new chat.');
+        }
         convId = newConv.id;
         
         // Refresh conversations to include the actual one
-        fetchConversations();
+        await fetchConversations();
         clearTargetUser?.();
       }
 
@@ -261,6 +269,7 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
 
       if (sendErr) {
         setError('Message failed to send. Try again.');
+        console.error('Message Send Error:', sendErr);
         throw sendErr;
       }
 
