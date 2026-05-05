@@ -15,9 +15,12 @@ interface MessengerProps {
 export default function Messenger({ currentUser, targetChatUser, onClose, onUserClick, clearTargetUser }: MessengerProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+  const [friends, setFriends] = useState<UserProfileData[]>([]);
+  const [isNewChatView, setIsNewChatView] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [friendsLoading, setFriendsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
@@ -36,6 +39,9 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
 
   useEffect(() => {
     fetchConversations();
+    if (!currentUser.id.startsWith('guest-')) {
+      fetchFriends();
+    }
     
     // Subscribe to conversations list changes
     const convSubscription = supabase
@@ -196,6 +202,51 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchFriends = async () => {
+    setFriendsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('friendships')
+        .select(`
+          sender:profiles!sender_id(id, name, avatar_url, avatar_color),
+          receiver:profiles!receiver_id(id, name, avatar_url, avatar_color)
+        `)
+        .eq('status', 'accepted')
+        .or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`);
+
+      if (error) throw error;
+
+      const friendList = (data || []).map(f => {
+        // @ts-ignore
+        return f.sender.id === currentUser.id ? f.receiver : f.sender;
+      });
+      // @ts-ignore
+      setFriends(friendList);
+    } catch (err) {
+      console.error('Error fetching friends for messenger:', err);
+    } finally {
+      setFriendsLoading(false);
+    }
+  };
+
+  const startGhostChat = (friend: UserProfileData) => {
+    const existing = conversations.find(c => c.participant_ids.includes(friend.id));
+    if (existing) {
+      setActiveConversation(existing);
+      fetchMessages(existing.id);
+    } else {
+      const ghostConv: Conversation = {
+        id: `new-${friend.id}`,
+        participant_ids: [currentUser.id, friend.id],
+        updated_at: new Date().toISOString(),
+        participants: [currentUser, friend]
+      };
+      setActiveConversation(ghostConv);
+      setMessages([]);
+    }
+    setIsNewChatView(false);
   };
 
   const fetchMessages = async (convId: string) => {
@@ -415,96 +466,136 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
         <div className="p-4 border-b border-black/5 dark:border-white/5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-brand-ink">Chats</h2>
-            <button className="p-2 hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full">
-              <MoreVertical size={20} />
-            </button>
+            <div className="flex gap-1">
+              <button 
+                onClick={() => setIsNewChatView(!isNewChatView)}
+                className={`p-2 rounded-full transition-colors ${isNewChatView ? 'bg-brand-olive text-white' : 'hover:bg-gray-100 dark:hover:bg-brand-ink/10 text-brand-ink'}`}
+                title="New Chat"
+              >
+                <Plus size={20} />
+              </button>
+              <button className="p-2 hover:bg-gray-100 dark:hover:bg-brand-ink/10 rounded-full text-brand-ink">
+                <MoreVertical size={20} />
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
             <input 
               type="text" 
-              placeholder="Search Messenger"
+              placeholder={isNewChatView ? "Search Friends" : "Search Messenger"}
               className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-brand-ink/20 border-none rounded-full text-sm focus:ring-1 focus:ring-[#1877F2]"
             />
           </div>
         </div>
 
         <div className="flex-grow overflow-y-auto">
-          {error && (
-            <div className="m-3 p-3 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2">
-              <div className="w-5 h-5 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <ArrowLeft size={12} className="rotate-90" />
-              </div>
-              {error}
-            </div>
-          )}
-          {loading ? (
-            <div className="p-4 space-y-4">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="flex gap-3 animate-pulse">
-                  <div className="w-12 h-12 rounded-full bg-gray-200 dark:bg-brand-ink/10" />
-                  <div className="flex-grow space-y-2">
-                    <div className="h-4 w-24 bg-gray-200 dark:bg-brand-ink/10 rounded" />
-                    <div className="h-3 w-40 bg-gray-200 dark:bg-brand-ink/10 rounded" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : conversations.length === 0 ? (
-            <div className="p-8 text-center text-gray-500 italic">
-              <p>No conversations yet.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-black/5">
-              {conversations.map((conv) => {
-                const otherUser = getOtherParticipant(conv);
-                return (
+          {isNewChatView ? (
+            <div className="p-2 space-y-1">
+              <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-brand-ink-subtle">Suggested Friends</div>
+              {friendsLoading ? (
+                <div className="p-4 text-center text-xs animate-pulse">Loading friends...</div>
+              ) : friends.length === 0 ? (
+                <div className="p-4 text-center text-xs text-gray-500 italic">No friends found to chat with.</div>
+              ) : (
+                friends.map(friend => (
                   <div 
-                    key={conv.id}
-                    onClick={() => {
-                      setActiveConversation(conv);
-                      fetchMessages(conv.id);
-                    }}
-                    className={`p-3 flex gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-brand-ink/10 transition-colors ${activeConversation?.id === conv.id ? 'bg-[#E7F3FF] dark:bg-brand-ink/20' : ''}`}
+                    key={friend.id}
+                    onClick={() => startGhostChat(friend)}
+                    className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-gray-50 dark:hover:bg-brand-ink/10 transition-colors"
                   >
                     <div 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUserClick?.(otherUser.id);
-                      }}
-                      className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold hover:opacity-80 transition-opacity"
-                      style={{ backgroundColor: otherUser.avatarColor || '#1877F2' }}
+                      className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold text-sm"
+                      style={{ backgroundColor: friend.avatarColor || '#1877F2' }}
                     >
-                      {otherUser.avatarUrl ? (
-                        <img src={otherUser.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
-                      ) : otherUser.name.charAt(0).toUpperCase()}
+                      {friend.avatarUrl ? (
+                        <img src={friend.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                      ) : friend.name.charAt(0).toUpperCase()}
                     </div>
-                    <div className="flex-grow overflow-hidden">
-                      <div className="flex justify-between items-baseline">
-                        <h4 
+                    <div className="font-bold text-sm text-brand-ink">{friend.name}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="m-3 p-3 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2">
+                  <div className="w-5 h-5 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <ArrowLeft size={12} className="rotate-90" />
+                  </div>
+                  {error}
+                </div>
+              )}
+              {loading ? (
+                <div className="p-4 space-y-4">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className="flex gap-3 animate-pulse">
+                      <div className="w-12 h-12 rounded-full bg-gray-200 dark:bg-brand-ink/10" />
+                      <div className="flex-grow space-y-2">
+                        <div className="h-4 w-24 bg-gray-200 dark:bg-brand-ink/10 rounded" />
+                        <div className="h-3 w-40 bg-gray-200 dark:bg-brand-ink/10 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="p-8 text-center text-gray-500 italic">
+                  <p>No conversations yet.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-black/5">
+                  {conversations.map((conv) => {
+                    const otherUser = getOtherParticipant(conv);
+                    return (
+                      <div 
+                        key={conv.id}
+                        onClick={() => {
+                          setActiveConversation(conv);
+                          fetchMessages(conv.id);
+                        }}
+                        className={`p-3 flex gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-brand-ink/10 transition-colors ${activeConversation?.id === conv.id ? 'bg-[#E7F3FF] dark:bg-brand-ink/20' : ''}`}
+                      >
+                        <div 
                           onClick={(e) => {
                             e.stopPropagation();
                             onUserClick?.(otherUser.id);
                           }}
-                          className="font-bold text-sm text-brand-ink truncate hover:underline"
+                          className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold hover:opacity-80 transition-opacity"
+                          style={{ backgroundColor: otherUser.avatarColor || '#1877F2' }}
                         >
-                          {otherUser.name}
-                        </h4>
-                        <span className="text-[10px] text-gray-500">{conv.last_message ? new Date(conv.last_message.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+                          {otherUser.avatarUrl ? (
+                            <img src={otherUser.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                          ) : otherUser.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-grow overflow-hidden">
+                          <div className="flex justify-between items-baseline">
+                            <h4 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUserClick?.(otherUser.id);
+                              }}
+                              className="font-bold text-sm text-brand-ink truncate hover:underline"
+                            >
+                              {otherUser.name}
+                            </h4>
+                            <span className="text-[10px] text-gray-500">{conv.last_message ? new Date(conv.last_message.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 truncate mt-1">
+                            {conv.last_message ? (
+                              <>
+                                {conv.last_message.sender_id === currentUser.id ? 'You: ' : ''}
+                                {conv.last_message.content}
+                              </>
+                            ) : 'Start a conversation'}
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-500 truncate mt-1">
-                        {conv.last_message ? (
-                          <>
-                            {conv.last_message.sender_id === currentUser.id ? 'You: ' : ''}
-                            {conv.last_message.content}
-                          </>
-                        ) : 'Start a conversation'}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

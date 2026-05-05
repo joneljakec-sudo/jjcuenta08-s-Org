@@ -142,12 +142,25 @@ DROP TRIGGER IF EXISTS on_post_comment ON public.post_comments;
 CREATE TRIGGER on_post_comment AFTER INSERT OR DELETE ON public.post_comments FOR EACH ROW EXECUTE FUNCTION public.handle_post_comment();
 
 -- 5. RLS POLICIES
+-- ... existing policies ...
+
+-- 6. STORAGE BUCKETS (Note: Create these manually in Supabase Dashboard)
+-- Create public bucket "profiles" for avatars
+-- Create public bucket "assets" for chat media
+-- Set storage RLS: 
+--   1. Allow SELECT to all
+--   2. Allow INSERT/UPDATE/DELETE to authenticated users for their own files
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.blocks ENABLE ROW LEVEL SECURITY;
+
+-- Profiles Policies
+CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- Allow all for authenticated for simplicity (adjust for production)
 CREATE POLICY "Manage own likes" ON public.post_likes FOR ALL TO authenticated USING (auth.uid() = user_id);
