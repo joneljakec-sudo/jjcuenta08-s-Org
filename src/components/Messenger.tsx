@@ -50,9 +50,21 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
         event: '*',
         schema: 'public',
         table: 'conversations'
-      }, (payload: any) => {
+      }, async (payload: any) => {
         // Filter in JS since array filters aren't supported in Realtime yet
         if (payload.new && payload.new.participant_ids?.includes(currentUser.id)) {
+          if (payload.eventType === 'INSERT' || (payload.eventType === 'UPDATE' && !payload.new.participants)) {
+            // Fetch participant profiles for the new conversation
+            const { data: profiles } = await supabase
+              .from('profiles')
+              .select('id, name, avatar_url, avatar_color')
+              .in('id', payload.new.participant_ids);
+            
+            payload.new.participants = payload.new.participant_ids.map((pId: string) => 
+              profiles?.find((p: any) => p.id === pId) || { id: pId, name: 'User', avatarColor: '#1877F2' }
+            );
+          }
+          
           if (payload.eventType === 'INSERT') {
             const newConv = payload.new as Conversation;
             setConversations(prev => {

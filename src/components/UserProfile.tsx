@@ -45,7 +45,7 @@ export default function UserProfile({ profile, onUpdate, onBack, onDeleteHistory
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${profile.id}-${Math.random()}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
+      const filePath = `${profile.id}/avatars/${fileName}`;
 
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage

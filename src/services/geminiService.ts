@@ -304,8 +304,17 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
     let recipes: any[] = JSON.parse(text);
     
     // Generate images in parallel for all recipes
-    const recipesWithImages = await Promise.all(recipes.map(async (recipe) => {
-      const imageUrl = await generateRecipeImage(recipe.visualCues || recipe.title);
+    const recipesWithImages = await Promise.all(recipes.map(async (recipe: any) => {
+      const keywords = (recipe.visualCues || recipe.title || "food")
+        .toLowerCase()
+        .replace(/with|and|recipe|of|the|a|for/g, '')
+        .replace(/[\W_]+/g, ' ')
+        .trim()
+        .split(' ')
+        .slice(0, 3)
+        .join(',');
+      
+      const imageUrl = `https://loremflickr.com/800/600/food,${encodeURIComponent(keywords)}`;
       return {
         ...recipe,
         id: recipe.id || `ai-${Math.random().toString(36).substr(2, 9)}`,

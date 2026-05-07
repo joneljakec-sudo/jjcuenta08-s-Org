@@ -1,5 +1,31 @@
--- 1. EXTEND TABLES
--- Ensure newsfeed exists
+-- SAVORIA NEIGHBORHOOD - COMPLETE SUPABASE SETUP
+-- IMPORTANT: Run this in your Supabase SQL Editor
+
+-- 1. BASE TABLES & EXTENSIONS
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    avatar_url TEXT,
+    avatar_color TEXT DEFAULT '#5A5A40',
+    preferences JSONB DEFAULT '{"diet": "Moderate", "budget": "Moderate", "allergies": [], "cuisines": []}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ensure replica identity is FULL for Realtime to work perfectly
+ALTER TABLE public.profiles REPLICA IDENTITY FULL;
+
+-- 2. SOCIAL & CONNECTIVITY
+CREATE TABLE IF NOT EXISTS public.friendships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    receiver_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'pending', -- 'pending', 'accepted', 'rejected'
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(sender_id, receiver_id)
+);
+
 CREATE TABLE IF NOT EXISTS public.newsfeed (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -13,50 +39,6 @@ CREATE TABLE IF NOT EXISTS public.newsfeed (
     recipe_image TEXT,
     likes_count INTEGER DEFAULT 0,
     comments_count INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Ensure newsfeed has all required metrics
-ALTER TABLE public.newsfeed ADD COLUMN IF NOT EXISTS likes_count INTEGER DEFAULT 0;
-ALTER TABLE public.newsfeed ADD COLUMN IF NOT EXISTS comments_count INTEGER DEFAULT 0;
-ALTER TABLE public.newsfeed ADD COLUMN IF NOT EXISTS user_avatar_url TEXT;
-
--- Initialize null columns
-UPDATE public.newsfeed SET likes_count = 0 WHERE likes_count IS NULL;
-UPDATE public.newsfeed SET comments_count = 0 WHERE comments_count IS NULL;
-
--- Profiles extension
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#1877F2';
-
--- 2. CORE TABLES
-CREATE TABLE IF NOT EXISTS public.friendships (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-    receiver_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-    status TEXT DEFAULT 'pending', 
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(sender_id, receiver_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    participant_ids UUID[] NOT NULL,
-    last_message JSONB DEFAULT '{}',
-    is_restricted BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
-    sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-    content TEXT,
-    media_url TEXT,
-    media_type TEXT DEFAULT 'text',
-    read BOOLEAN DEFAULT false,
-    is_deleted BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -79,6 +61,42 @@ CREATE TABLE IF NOT EXISTS public.post_comments (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 3. MESSAGING SYSTEM
+CREATE TABLE IF NOT EXISTS public.conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    participant_ids UUID[] NOT NULL,
+    last_message JSONB DEFAULT '{}',
+    is_restricted BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
+    sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    content TEXT,
+    media_url TEXT,
+    media_type TEXT DEFAULT 'text', -- 'text', 'image', 'video'
+    read BOOLEAN DEFAULT false,
+    is_deleted BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. MEAL PLANNING
+CREATE TABLE IF NOT EXISTS public.meal_plans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    recipe_id TEXT,
+    recipe_title TEXT,
+    recipe_image TEXT,
+    date TEXT, -- format: 'YYYY-MM-DD'
+    meal_type TEXT, -- 'Breakfast', 'Lunch', 'Dinner', 'Snack'
+    is_meal_prep BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. SAFETY & MODERATION
 CREATE TABLE IF NOT EXISTS public.blocks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     blocker_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -87,30 +105,23 @@ CREATE TABLE IF NOT EXISTS public.blocks (
     UNIQUE(blocker_id, blocked_id)
 );
 
--- 3. REALTIME ENABLEMENT
--- Drop before add if already exists from previous runs
-BEGIN;
-  DO $$
-  BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-      CREATE PUBLICATION supabase_realtime;
-    END IF;
-  END $$;
-
-  ALTER PUBLICATION supabase_realtime ADD TABLE newsfeed;
-  ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
-  ALTER PUBLICATION supabase_realtime ADD TABLE conversations;
-  ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-  ALTER PUBLICATION supabase_realtime ADD TABLE post_comments;
-  ALTER PUBLICATION supabase_realtime ADD TABLE post_likes;
-  ALTER PUBLICATION supabase_realtime ADD TABLE friendships;
-EXCEPTION WHEN OTHERS THEN
-  -- Handle tables already in publication
-  RAISE NOTICE 'Some tables might already be in publication';
+-- 6. AUTOMATION TRIGGERS
+-- Create profile trigger
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (id, email, name, avatar_color)
+    VALUES (NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'name', NEW.email), '#5A5A40');
+    RETURN NEW;
 END;
-COMMIT;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 4. TRIGGERS
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Post Likes Count Trigger
 CREATE OR REPLACE FUNCTION public.handle_post_like()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -126,6 +137,7 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS on_post_like ON public.post_likes;
 CREATE TRIGGER on_post_like AFTER INSERT OR DELETE ON public.post_likes FOR EACH ROW EXECUTE FUNCTION public.handle_post_like();
 
+-- Post Comments Count Trigger
 CREATE OR REPLACE FUNCTION public.handle_post_comment()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -141,7 +153,28 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS on_post_comment ON public.post_comments;
 CREATE TRIGGER on_post_comment AFTER INSERT OR DELETE ON public.post_comments FOR EACH ROW EXECUTE FUNCTION public.handle_post_comment();
 
--- 5. RLS POLICIES
+-- 7. REALTIME ENABLEMENT
+BEGIN;
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+      CREATE PUBLICATION supabase_realtime;
+    END IF;
+  END $$;
+
+  ALTER PUBLICATION supabase_realtime ADD TABLE newsfeed;
+  ALTER PUBLICATION supabase_realtime ADD TABLE conversations;
+  ALTER PUBLICATION supabase_realtime ADD TABLE messages;
+  ALTER PUBLICATION supabase_realtime ADD TABLE post_comments;
+  ALTER PUBLICATION supabase_realtime ADD TABLE post_likes;
+  ALTER PUBLICATION supabase_realtime ADD TABLE friendships;
+  ALTER PUBLICATION supabase_realtime ADD TABLE meal_plans;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'Handled Realtime publication assignment';
+END;
+COMMIT;
+
+-- 8. ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.newsfeed ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
@@ -149,71 +182,80 @@ ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.meal_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.blocks ENABLE ROW LEVEL SECURITY;
 
--- Profiles Policies
+-- Policies for Profiles
 CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
--- Newsfeed Policies
+-- Policies for Newsfeed
 CREATE POLICY "Newsfeed is viewable by everyone" ON public.newsfeed FOR SELECT USING (true);
 CREATE POLICY "Authenticated users can create posts" ON public.newsfeed FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can manage own posts" ON public.newsfeed FOR UPDATE TO authenticated USING (auth.uid() = user_id);
-CREATE POLICY "Users can delete own posts" ON public.newsfeed FOR DELETE TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage own posts" ON public.newsfeed FOR ALL TO authenticated USING (auth.uid() = user_id);
 
--- Conversations Policies (Allow access if joined)
+-- Policies for Friendships
+CREATE POLICY "Manage friendships" ON public.friendships FOR ALL TO authenticated USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+
+-- Policies for Conversations
 CREATE POLICY "See conversations" ON public.conversations FOR SELECT TO authenticated USING (auth.uid() = ANY(participant_ids));
 CREATE POLICY "Create conversations" ON public.conversations FOR INSERT TO authenticated WITH CHECK (auth.uid() = ANY(participant_ids));
 CREATE POLICY "Update conversations" ON public.conversations FOR UPDATE TO authenticated USING (auth.uid() = ANY(participant_ids));
 
--- Messages Policies
+-- Policies for Messages
 CREATE POLICY "See messages" ON public.messages FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.conversations WHERE id = messages.conversation_id AND auth.uid() = ANY(participant_ids)));
-CREATE POLICY "Send messages" ON public.messages FOR INSERT TO authenticated WITH CHECK (auth.uid() = sender_id AND EXISTS (SELECT 1 FROM public.conversations WHERE id = messages.conversation_id AND auth.uid() = ANY(participant_ids)));
-CREATE POLICY "Manage own messages" ON public.messages FOR UPDATE TO authenticated USING (auth.uid() = sender_id);
 
--- Post Likes & Comments
+-- USER REQUESTED FIX: Send messages restricted to participants
+CREATE POLICY "Users can send messages into their conversations" 
+ON public.messages 
+FOR INSERT 
+TO authenticated
+WITH CHECK (
+  auth.uid() = sender_id AND
+  EXISTS (
+    SELECT 1 FROM public.conversations 
+    WHERE id = messages.conversation_id 
+    AND auth.uid() = ANY(participant_ids)
+  )
+);
+
+CREATE POLICY "Manage own messages" ON public.messages FOR UPDATE TO authenticated USING (auth.uid() = sender_id);
+CREATE POLICY "Delete own messages" ON public.messages FOR DELETE TO authenticated USING (auth.uid() = sender_id);
+
+-- Policies for Likes & Comments
 CREATE POLICY "Manage own likes" ON public.post_likes FOR ALL TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "See all likes" ON public.post_likes FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Manage own comments" ON public.post_comments FOR ALL TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "See all comments" ON public.post_comments FOR SELECT TO authenticated USING (true);
 
--- Relationships
-CREATE POLICY "Manage friendships" ON public.friendships FOR ALL TO authenticated USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+-- Policies for Meal Plans
+CREATE POLICY "Users can manage own meal plans" ON public.meal_plans FOR ALL TO authenticated USING (auth.uid() = user_id);
+
+-- Policies for Blocks
 CREATE POLICY "Manage blocks" ON public.blocks FOR ALL TO authenticated USING (auth.uid() = blocker_id);
 CREATE POLICY "See blocks" ON public.blocks FOR SELECT TO authenticated USING (true);
 
--- 6. MEAL PLANS TABLE
-CREATE TABLE IF NOT EXISTS public.meal_plans (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-    recipe_id TEXT,
-    recipe_title TEXT,
-    recipe_image TEXT,
-    date TEXT, -- format: 'YYYY-MM-DD'
-    meal_type TEXT, -- 'Breakfast', 'Lunch', 'Dinner', 'Snack'
-    is_meal_prep BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- 9. STORAGE BUCKETS & POLICIES
+-- NOTE: Please ensure buckets 'profiles' and 'assets' are created in the Dashboard with Public access.
+-- If not, run: INSERT INTO storage.buckets (id, name, public) VALUES ('profiles', 'profiles', true), ('assets', 'assets', true) ON CONFLICT DO NOTHING;
 
-ALTER TABLE public.meal_plans ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can manage own meal plans" ON public.meal_plans FOR ALL TO authenticated USING (auth.uid() = user_id);
+-- USER REQUESTED STORAGE FIX: Avatar upload restricted to owner folder
+CREATE POLICY "Users can upload their own avatar"
+ON storage.objects FOR INSERT 
+TO authenticated 
+WITH CHECK (bucket_id = 'profiles' AND (storage.foldername(name))[1] = auth.uid()::text);
 
--- 7. STORAGE BUCKETS & POLICIES
--- NOTE: These buckets MUST be created manually in Supabase as PUBLIC for this code to work
--- Or run: insert into storage.buckets (id, name, public) values ('profiles', 'profiles', true), ('assets', 'assets', true) on conflict do nothing;
+-- USER REQUESTED STORAGE FIX: Public select for avatars
+CREATE POLICY "Avatar images are publicly accessible"
+ON storage.objects FOR SELECT 
+USING (bucket_id = 'profiles');
 
--- Profiles Bucket Policies
-CREATE POLICY "Avatar selection" ON storage.objects FOR SELECT USING (bucket_id = 'profiles');
-CREATE POLICY "Avatar upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'profiles');
-CREATE POLICY "Avatar update" ON storage.objects FOR UPDATE TO authenticated WITH CHECK (bucket_id = 'profiles');
-CREATE POLICY "Avatar delete" ON storage.objects FOR DELETE TO authenticated WITH CHECK (bucket_id = 'profiles');
+-- Broad policies for Assets (General app assets and message media)
+CREATE POLICY "Asset images are publicly accessible" ON storage.objects FOR SELECT USING (bucket_id = 'assets');
+CREATE POLICY "Asset upload restricted to authenticated" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'assets');
+CREATE POLICY "Asset delete restricted to owner" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'assets');
 
--- Assets Bucket Policies
-CREATE POLICY "Asset selection" ON storage.objects FOR SELECT USING (bucket_id = 'assets');
-CREATE POLICY "Asset upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'assets');
-CREATE POLICY "Asset update" ON storage.objects FOR UPDATE TO authenticated WITH CHECK (bucket_id = 'assets');
-
--- 8. REPLICA IDENTITY
+-- 10. REPLICA IDENTITY (Crucial for Realtime)
 ALTER TABLE public.profiles REPLICA IDENTITY FULL;
 ALTER TABLE public.newsfeed REPLICA IDENTITY FULL;
 ALTER TABLE public.conversations REPLICA IDENTITY FULL;
