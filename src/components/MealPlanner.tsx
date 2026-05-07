@@ -188,7 +188,8 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
       });
       
       if (suggested && suggested.length > 0) {
-        const newRecipe = suggested[0];
+        // Pick a random one for variety
+        const newRecipe = suggested[Math.floor(Math.random() * suggested.length)];
         
         const { data, error } = await supabase
           .from('meal_plans')
@@ -309,7 +310,8 @@ export default function MealPlanner({ userRecipes, favorites, onRecipeClick, use
       });
       
       if (suggested && suggested.length > 0) {
-        const recipe = suggested[0];
+        // Pick random for variety
+        const recipe = suggested[Math.floor(Math.random() * suggested.length)];
         const newPlan: Omit<MealPlan, 'id'> = {
           user_id: userId,
           recipe_id: recipe.id,

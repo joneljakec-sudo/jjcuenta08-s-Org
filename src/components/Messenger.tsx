@@ -220,9 +220,14 @@ export default function Messenger({ currentUser, targetChatUser, onClose, onUser
 
       const friendList = (data || []).map(f => {
         // @ts-ignore
-        return f.sender.id === currentUser.id ? f.receiver : f.sender;
+        const profile = f.sender.id === currentUser.id ? f.receiver : f.sender;
+        return {
+          id: profile.id,
+          name: profile.name,
+          avatarUrl: profile.avatar_url,
+          avatarColor: profile.avatar_color
+        } as UserProfileData;
       });
-      // @ts-ignore
       setFriends(friendList);
     } catch (err) {
       console.error('Error fetching friends for messenger:', err);

@@ -161,19 +161,63 @@ CREATE POLICY "Authenticated users can create posts" ON public.newsfeed FOR INSE
 CREATE POLICY "Users can manage own posts" ON public.newsfeed FOR UPDATE TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Users can delete own posts" ON public.newsfeed FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
--- Allow all for authenticated for simplicity (adjust for production)
+-- Conversations Policies (Allow access if joined)
+CREATE POLICY "See conversations" ON public.conversations FOR SELECT TO authenticated USING (auth.uid() = ANY(participant_ids));
+CREATE POLICY "Create conversations" ON public.conversations FOR INSERT TO authenticated WITH CHECK (auth.uid() = ANY(participant_ids));
+CREATE POLICY "Update conversations" ON public.conversations FOR UPDATE TO authenticated USING (auth.uid() = ANY(participant_ids));
+
+-- Messages Policies
+CREATE POLICY "See messages" ON public.messages FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.conversations WHERE id = messages.conversation_id AND auth.uid() = ANY(participant_ids)));
+CREATE POLICY "Send messages" ON public.messages FOR INSERT TO authenticated WITH CHECK (auth.uid() = sender_id AND EXISTS (SELECT 1 FROM public.conversations WHERE id = messages.conversation_id AND auth.uid() = ANY(participant_ids)));
+CREATE POLICY "Manage own messages" ON public.messages FOR UPDATE TO authenticated USING (auth.uid() = sender_id);
+
+-- Post Likes & Comments
 CREATE POLICY "Manage own likes" ON public.post_likes FOR ALL TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "See all likes" ON public.post_likes FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Manage own comments" ON public.post_comments FOR ALL TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "See all comments" ON public.post_comments FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Manage conversations" ON public.conversations FOR ALL TO authenticated USING (auth.uid() = ANY(participant_ids));
-CREATE POLICY "Manage messages" ON public.messages FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM public.conversations WHERE id = messages.conversation_id AND auth.uid() = ANY(participant_ids)));
+
+-- Relationships
 CREATE POLICY "Manage friendships" ON public.friendships FOR ALL TO authenticated USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
 CREATE POLICY "Manage blocks" ON public.blocks FOR ALL TO authenticated USING (auth.uid() = blocker_id);
 CREATE POLICY "See blocks" ON public.blocks FOR SELECT TO authenticated USING (true);
 
--- Ensure replica identity is set for real-time updates
+-- 6. MEAL PLANS TABLE
+CREATE TABLE IF NOT EXISTS public.meal_plans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    recipe_id TEXT,
+    recipe_title TEXT,
+    recipe_image TEXT,
+    date TEXT, -- format: 'YYYY-MM-DD'
+    meal_type TEXT, -- 'Breakfast', 'Lunch', 'Dinner', 'Snack'
+    is_meal_prep BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.meal_plans ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can manage own meal plans" ON public.meal_plans FOR ALL TO authenticated USING (auth.uid() = user_id);
+
+-- 7. STORAGE BUCKETS & POLICIES
+-- NOTE: These buckets MUST be created manually in Supabase as PUBLIC for this code to work
+-- Or run: insert into storage.buckets (id, name, public) values ('profiles', 'profiles', true), ('assets', 'assets', true) on conflict do nothing;
+
+-- Profiles Bucket Policies
+CREATE POLICY "Avatar selection" ON storage.objects FOR SELECT USING (bucket_id = 'profiles');
+CREATE POLICY "Avatar upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'profiles');
+CREATE POLICY "Avatar update" ON storage.objects FOR UPDATE TO authenticated WITH CHECK (bucket_id = 'profiles');
+CREATE POLICY "Avatar delete" ON storage.objects FOR DELETE TO authenticated WITH CHECK (bucket_id = 'profiles');
+
+-- Assets Bucket Policies
+CREATE POLICY "Asset selection" ON storage.objects FOR SELECT USING (bucket_id = 'assets');
+CREATE POLICY "Asset upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'assets');
+CREATE POLICY "Asset update" ON storage.objects FOR UPDATE TO authenticated WITH CHECK (bucket_id = 'assets');
+
+-- 8. REPLICA IDENTITY
+ALTER TABLE public.profiles REPLICA IDENTITY FULL;
+ALTER TABLE public.newsfeed REPLICA IDENTITY FULL;
 ALTER TABLE public.conversations REPLICA IDENTITY FULL;
 ALTER TABLE public.messages REPLICA IDENTITY FULL;
-ALTER TABLE public.newsfeed REPLICA IDENTITY FULL;
 ALTER TABLE public.post_comments REPLICA IDENTITY FULL;
+ALTER TABLE public.friendships REPLICA IDENTITY FULL;
+ALTER TABLE public.meal_plans REPLICA IDENTITY FULL;

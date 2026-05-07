@@ -235,7 +235,7 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
   }
 
   try {
-    const prompt = `Generate 6 unique, creative, and highly specific recipe recommendations.
+    const prompt = `Generate 12 unique, creative, and highly specific recipe recommendations.
     
     USER PROFILE & CONSTRAINTS:
     - Meal Type: ${preferences.mealType || "Any"}
@@ -247,10 +247,14 @@ export async function generateRecipes(preferences: UserPreferences, forceRefresh
     
     QUALITY GUIDELINES:
     1. Title: Creative and specific (e.g., "Crispy Pan-Seared Salmon with Miso-Ginger Glaze" instead of "Salmon").
-    2. Variety: Ensure a mix of flavors, textures, and cooking methods.
+    2. Variety: Ensure a mix of flavors, textures, and cooking methods. Use 12 unique recipes.
     3. Localization: Since this is "Savoria Neighborhood", lean into warm, communal, and hearty meals.
-    4. Numeric Accuracy: Estimated cost MUST be in PHP and fit ${preferences.budget} (Budget: <100, Moderate: 100-300, Premium: >300).
-    5. Image Prompt: Provide a detailed "visualCues" field describing the dish's appearance for image generation.`;
+    4. Numeric Accuracy: Estimated cost MUST be in PHP. 
+       - If Budget: 50-120 PHP
+       - If Moderate: 150-400 PHP
+       - If Premium: 450-2000 PHP
+    5. Calories: Ensure it accurately matches the goal ${preferences.calorieGoal || 500} kcal.
+    6. Image Prompt: Provide a detailed "visualCues" field describing the dish's appearance for image generation.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
