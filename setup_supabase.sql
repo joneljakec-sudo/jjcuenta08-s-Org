@@ -106,6 +106,27 @@ CREATE TABLE IF NOT EXISTS public.blocks (
 );
 
 -- 6. AUTOMATION TRIGGERS
+-- Updated at trigger function
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply updated_at to profiles
+DROP TRIGGER IF EXISTS on_profiles_updated ON public.profiles;
+CREATE TRIGGER on_profiles_updated
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- Apply updated_at to conversations
+DROP TRIGGER IF EXISTS on_conversations_updated ON public.conversations;
+CREATE TRIGGER on_conversations_updated
+    BEFORE UPDATE ON public.conversations
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
 -- Create profile trigger
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
